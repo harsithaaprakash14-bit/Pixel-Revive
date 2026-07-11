@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PixelRevive AI Photo Restoration History - Review, download, or delete previously restored photos.">
+    <title>PixelRevive AI - Restoration History</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* ─── Design Tokens & CSS Variables ───────────────────────────────────── */
+        :root {
+            --bg-dark: #07080d;
+            --bg-card: rgba(20, 21, 35, 0.45);
+            --bg-card-hover: rgba(30, 32, 54, 0.55);
+            --accent-primary: #6366f1; /* Indigo */
+            --accent-secondary: #a855f7; /* Purple */
+            --accent-gradient: linear-gradient(135deg, #6366f1, #a855f7);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --success: #10b981;
+            --error: #ef4444;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(99, 102, 241, 0.5);
+            --font-display: 'Outfit', sans-serif;
+            --font-sans: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+            position: relative;
+            padding-top: 6rem;
+            padding-bottom: 3rem;
+        }
+
+        /* ─── Navigation Bar ─────────────────────────────────────────────────── */
+        .nav-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2.5rem;
+            background: rgba(10, 11, 20, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            width: 100%;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 100;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-family: var(--font-display);
+            font-weight: 800;
+            font-size: 1.35rem;
+            color: white;
+            text-decoration: none;
+        }
+
+        .nav-brand svg {
+            color: var(--accent-primary);
+            width: 26px;
+            height: 26px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .nav-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            position: relative;
+            padding: 0.25rem 0;
+        }
+
+        .nav-link:hover, .nav-link.active {
+            color: white;
+        }
+
+        .nav-link.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: var(--accent-gradient);
+            border-radius: 99px;
+        }
+
+        /* Background Blobs */
+        .bg-blobs {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.1;
+            mix-blend-mode: screen;
+            animation: float 20s infinite ease-in-out;
+        }
+
+        .blob-1 {
+            width: 500px;
+            height: 500px;
+            background: var(--accent-primary);
+            top: -150px;
+            left: -150px;
+        }
+
+        .blob-2 {
+            width: 400px;
+            height: 400px;
+            background: var(--accent-secondary);
+            bottom: -100px;
+            right: -100px;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0) scale(1); }
+            50% { transform: translateY(-30px) scale(1.05); }
+        }
+
+        .container {
+            width: 100%;
+            max-width: 950px;
+            padding: 1.5rem;
+            z-index: 1;
+        }
+
+        header {
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-family: var(--font-display);
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(to right, #ffffff, #e2e8f0, #a5b4fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            margin-top: 0.3rem;
+        }
+
+        /* ─── Filter Form Bar ────────────────────────────────────────────────── */
+        .filters-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .filters-form {
+            display: flex;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            flex: 1;
+            min-width: 180px;
+        }
+
+        .form-group label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #a5b4fc;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .form-control {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: white;
+            padding: 0.75rem 1rem;
+            border-radius: 10px;
+            font-family: var(--font-sans);
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            outline: none;
+            width: 100%;
+        }
+
+        .form-control:focus {
+            border-color: var(--accent-primary);
+            background: rgba(255, 255, 255, 0.07);
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+        }
+
+        select.form-control {
+            cursor: pointer;
+        }
+
+        select.form-control option {
+            background: var(--bg-dark);
+            color: white;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: var(--font-sans);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--accent-gradient);
+            color: white;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            filter: brightness(1.08);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateY(-2px);
+        }
+
+        /* ─── History Grid ───────────────────────────────────────────────────── */
+        .history-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .history-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.5rem;
+            display: flex;
+            gap: 1.75rem;
+            align-items: center;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .history-item:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.25);
+            transform: translateY(-2px);
+        }
+
+        /* Images Preview Column */
+        .item-images {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .thumb-box {
+            width: 80px;
+            height: 80px;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: #000;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .thumb-box img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .thumb-arrow {
+            color: var(--text-muted);
+            font-size: 1.25rem;
+            font-weight: bold;
+        }
+
+        /* Details Column */
+        .item-details {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .item-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            word-break: break-all;
+            font-family: var(--font-display);
+        }
+
+        .item-meta {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .item-meta-item {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.25rem 0.65rem;
+            border-radius: 6px;
+            width: fit-content;
+        }
+
+        .status-restored {
+            background: rgba(16, 185, 129, 0.1);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .status-processing {
+            background: rgba(245, 158, 11, 0.1);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        .status-failed {
+            background: rgba(239, 68, 68, 0.1);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        /* Actions Column */
+        .item-actions {
+            display: flex;
+            gap: 0.75rem;
+            flex-shrink: 0;
+        }
+
+        .action-btn {
+            width: 38px;
+            height: 38px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-main);
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+
+        .action-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            transform: scale(1.05);
+        }
+
+        .action-btn.btn-dl:hover {
+            background: var(--accent-gradient);
+            color: white;
+            border-color: transparent;
+            box-shadow: 0 5px 12px rgba(99, 102, 241, 0.35);
+        }
+
+        .action-btn.btn-del:hover {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 5rem 2rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        .empty-icon {
+            font-size: 3.5rem;
+            color: var(--text-muted);
+            margin-bottom: 1.5rem;
+            display: inline-block;
+        }
+
+        .empty-title {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .empty-desc {
+            color: var(--text-muted);
+            margin-bottom: 1.75rem;
+            font-size: 0.95rem;
+        }
+
+        /* ─── Lightbox Modal (Preview) ────────────────────────────────────────── */
+        .modal {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            background: rgba(5, 5, 8, 0.95);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 2rem;
+            backdrop-filter: blur(8px);
+            animation: fadeIn 0.3s ease;
+        }
+
+        .modal-content {
+            position: relative;
+            max-width: 90%;
+            max-height: 90%;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .modal-img {
+            max-width: 100%;
+            max-height: 80vh;
+            display: block;
+            object-fit: contain;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(0,0,0,0.6);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: white;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 1.25rem;
+            transition: all 0.3s ease;
+        }
+
+        .modal-close:hover {
+            background: var(--error);
+            transform: scale(1.1) rotate(90deg);
+        }
+
+        /* ─── Responsive adjustments ─────────────────────────────────────────── */
+        @media (max-width: 768px) {
+            body { padding-top: 5rem; }
+            .history-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 1.25rem;
+            }
+            .item-actions {
+                width: 100%;
+                justify-content: flex-end;
+                border-top: 1px solid rgba(255, 255, 255, 0.05);
+                padding-top: 1rem;
+            }
+            .filters-form {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .filter-buttons {
+                width: 100%;
+            }
+            .filter-buttons .btn {
+                flex: 1;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Navigation Header -->
+    <nav class="nav-bar">
+        <a href="/" class="nav-brand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+            <span>PixelRevive AI</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Studio</a>
+            <a href="/history" class="nav-link active">History</a>
+            <a href="/admin" class="nav-link">Admin</a>
+        </div>
+    </nav>
+
+    <div class="bg-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>Restoration History</h1>
+            <p class="subtitle">Review and manage your processed images</p>
+        </header>
+
+        <!-- Filters Form Card -->
+        <section class="filters-card">
+            <form class="filters-form" method="GET" action="/history">
+                <div class="form-group" style="flex: 2;">
+                    <label for="search">Search File</label>
+                    <input type="text" id="search" name="search" class="form-control" placeholder="Filename contains..." value="{{ filters.search }}">
+                </div>
+                <div class="form-group">
+                    <label for="status">Status</label>
+                    <select id="status" name="status" class="form-control">
+                        <option value="">All Statuses</option>
+                        <option value="restored" {% if filters.status == 'restored' %}selected{% endif %}>Restored</option>
+                        <option value="processing" {% if filters.status == 'processing' %}selected{% endif %}>Processing</option>
+                        <option value="failed" {% if filters.status == 'failed' %}selected{% endif %}>Failed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="start_date">From Date</label>
+                    <input type="date" id="start_date" name="start_date" class="form-control" value="{{ filters.start_date }}">
+                </div>
+                <div class="form-group">
+                    <label for="end_date">To Date</label>
+                    <input type="date" id="end_date" name="end_date" class="form-control" value="{{ filters.end_date }}">
+                </div>
+                <div class="filter-buttons">
+                    <button type="submit" class="btn btn-primary">Filter</button>
+                    <a href="/history" class="btn btn-secondary">Clear</a>
+                </div>
+            </form>
+        </section>
+
+        <!-- History Content -->
+        <main>
+            {% if images %}
+                <div class="history-grid">
+                    {% for img in images %}
+                        <article class="history-item" id="item-{{ img.id }}">
+                            <!-- Thumbnail Preview Box -->
+                            <div class="item-images">
+                                <div class="thumb-box" title="View Original" onclick="openLightbox('/uploads/{{ img.filename }}')">
+                                    <img src="/uploads/{{ img.filename }}" alt="Original">
+                                </div>
+                                {% if img.status == 'restored' and img.processed_filename %}
+                                    <div class="thumb-arrow">→</div>
+                                    <div class="thumb-box" title="View Processed" onclick="openLightbox('/uploads/{{ img.processed_filename }}')">
+                                        <img src="/uploads/{{ img.processed_filename }}" alt="Restored">
+                                    </div>
+                                {% endif %}
+                            </div>
+
+                            <!-- Image Info details -->
+                            <div class="item-details">
+                                <div class="item-title">{{ img.filename }}</div>
+                                <div class="item-meta">
+                                    <div class="item-meta-item">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                            <circle cx="12" cy="12" r="10"></circle>
+                                            <polyline points="12 6 12 12 16 14"></polyline>
+                                        </svg>
+                                        <span>{{ img.upload_time.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+                                    </div>
+                                    {% if img.status == 'restored' %}
+                                        <div class="item-meta-item">
+                                            <span>⏱ {{ '%.1f' | format(img.duration or 0) }}s</span>
+                                        </div>
+                                        <div class="item-meta-item">
+                                            <span>👤 {{ img.faces_detected or 0 }} faces</span>
+                                        </div>
+                                    {% endif %}
+                                    <div>
+                                        <span class="status-badge status-{{ img.status }}">{{ img.status }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Actions column -->
+                            <div class="item-actions">
+                                {% if img.status == 'restored' and img.processed_filename %}
+                                    <a class="action-btn btn-dl" title="Download Restored" href="/download/{{ img.processed_filename }}" download>
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                            <polyline points="7 10 12 15 17 10"></polyline>
+                                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                                        </svg>
+                                    </a>
+                                {% endif %}
+                                <button type="button" class="action-btn btn-del" title="Delete Entry" onclick="confirmDelete({{ img.id }})">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                        <line x1="10" y1="11" x2="10" y2="17"></line>
+                                        <line x1="14" y1="11" x2="14" y2="17"></line>
+                                    </svg>
+                                </button>
+                            </div>
+                        </article>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="empty-state">
+                    <span class="empty-icon">📂</span>
+                    <h3 class="empty-title">No Restorations Found</h3>
+                    <p class="empty-desc">You haven't uploaded any photos or no records match your filter criteria.</p>
+                    <a href="/" class="btn btn-primary">Restore a Photo</a>
+                </div>
+            {% endif %}
+        </main>
+    </div>
+
+    <!-- Lightbox Modal -->
+    <div class="modal" id="lightbox" onclick="closeLightbox()">
+        <button type="button" class="modal-close" onclick="closeLightbox()">×</button>
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <img class="modal-img" id="lightbox-img" src="" alt="Zoomed View">
+        </div>
+    </div>
+
+    <script>
+        // ─── Modal Lightbox Control ──────────────────────────────────────────
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightbox-img');
+
+        function openLightbox(src) {
+            lightboxImg.src = src;
+            lightbox.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeLightbox() {
+            lightbox.style.display = 'none';
+            lightboxImg.src = '';
+            document.body.style.overflow = 'auto';
+        }
+
+        // Close on escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeLightbox();
+        });
+
+        // ─── Delete Entry (AJAX) ──────────────────────────────────────────────
+        async function confirmDelete(imageId) {
+            if (!confirm('Are you sure you want to delete this restoration from your history? The database record and physical image files will be permanently removed.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/delete/${imageId}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+
+                if (response.ok && data.status === 'success') {
+                    // Fade out and remove element from DOM
+                    const card = document.getElementById(`item-${imageId}`);
+                    if (card) {
+                        card.style.opacity = '0';
+                        card.style.transform = 'translateY(10px)';
+                        card.style.transition = 'all 0.4s ease';
+                        setTimeout(() => {
+                            card.remove();
+                            // If no items remain, reload to display empty state
+                            const remainingItems = document.querySelectorAll('.history-item');
+                            if (remainingItems.length === 0) {
+                                window.location.reload();
+                            }
+                        }, 400);
+                    }
+                } else {
+                    alert(`Error: ${data.error || 'Failed to delete entry.'}`);
+                }
+            } catch (err) {
+                alert('Network error. Failed to delete entry.');
+            }
+        }
+    </script>
+</body>
+</html>

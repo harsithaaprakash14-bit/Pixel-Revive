@@ -1,0 +1,7 @@
+torch
+torchvision
+simple-lama-inpainting
+Pillow
+numpy
+opencv-python
+scikit-learn

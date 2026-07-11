@@ -1,0 +1,41 @@
+# Python
+
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual Environment
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Uploads & Outputs
+uploads/
+outputs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Database
+*.db
+*.sqlite3
+
+# Model checkpoints
+*.pth
+*.ckpt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test cache
+.pytest_cache/
+*.swap

@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PixelRevive AI Photo Restoration Admin Dashboard - Analytics, system performance, and database statistics.">
+    <title>PixelRevive AI - System Admin Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* ─── Design Tokens & CSS Variables ───────────────────────────────────── */
+        :root {
+            --bg-dark: #07080d;
+            --bg-card: rgba(20, 21, 35, 0.45);
+            --bg-card-hover: rgba(30, 32, 54, 0.55);
+            --accent-primary: #6366f1; /* Indigo */
+            --accent-secondary: #a855f7; /* Purple */
+            --accent-gradient: linear-gradient(135deg, #6366f1, #a855f7);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --success: #10b981;
+            --error: #ef4444;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(99, 102, 241, 0.5);
+            --font-display: 'Outfit', sans-serif;
+            --font-sans: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+            position: relative;
+            padding-top: 6rem;
+            padding-bottom: 3rem;
+        }
+
+        /* ─── Navigation Bar ─────────────────────────────────────────────────── */
+        .nav-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2.5rem;
+            background: rgba(10, 11, 20, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            width: 100%;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 100;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-family: var(--font-display);
+            font-weight: 800;
+            font-size: 1.35rem;
+            color: white;
+            text-decoration: none;
+        }
+
+        .nav-brand svg {
+            color: var(--accent-primary);
+            width: 26px;
+            height: 26px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .nav-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            position: relative;
+            padding: 0.25rem 0;
+        }
+
+        .nav-link:hover, .nav-link.active {
+            color: white;
+        }
+
+        .nav-link.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: var(--accent-gradient);
+            border-radius: 99px;
+        }
+
+        /* Background Blobs */
+        .bg-blobs {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.1;
+            mix-blend-mode: screen;
+            animation: float 20s infinite ease-in-out;
+        }
+
+        .blob-1 {
+            width: 500px;
+            height: 500px;
+            background: var(--accent-primary);
+            top: -150px;
+            left: -150px;
+        }
+
+        .blob-2 {
+            width: 400px;
+            height: 400px;
+            background: var(--accent-secondary);
+            bottom: -100px;
+            right: -100px;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0) scale(1); }
+            50% { transform: translateY(-30px) scale(1.05); }
+        }
+
+        .container {
+            width: 100%;
+            max-width: 950px;
+            padding: 1.5rem;
+            z-index: 1;
+        }
+
+        header {
+            margin-bottom: 2.5rem;
+        }
+
+        h1 {
+            font-family: var(--font-display);
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(to right, #ffffff, #e2e8f0, #a5b4fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            margin-top: 0.3rem;
+        }
+
+        /* ─── Stats Grid ─────────────────────────────────────────────────────── */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.25rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            border-color: rgba(99, 102, 241, 0.3);
+            box-shadow: 0 15px 35px rgba(99, 102, 241, 0.08);
+            transform: translateY(-2px);
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-value {
+            font-size: 2.2rem;
+            font-weight: 800;
+            font-family: var(--font-display);
+            background: linear-gradient(135deg, white, #e2e8f0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .stat-card:nth-child(1) .stat-value {
+            background: linear-gradient(135deg, white, #a5b4fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-card:nth-child(2) .stat-value {
+            background: linear-gradient(135deg, #34d399, #10b981);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-card:nth-child(3) .stat-value {
+            background: linear-gradient(135deg, #a855f7, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* ─── Chart/Breakdown Row ────────────────────────────────────────────── */
+        .breakdown-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.25rem;
+            margin-bottom: 2rem;
+        }
+
+        .breakdown-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.5rem;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .card-header-title {
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 1.25rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            padding-bottom: 0.75rem;
+            color: #c7d2fe;
+        }
+
+        .breakdown-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+        }
+
+        .breakdown-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .breakdown-label {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .breakdown-value-box {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .breakdown-count {
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        .breakdown-pct {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 0.15rem 0.5rem;
+            border-radius: 6px;
+        }
+
+        /* ─── Table Design ───────────────────────────────────────────────────── */
+        .table-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.5rem;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            overflow: hidden;
+        }
+
+        .table-responsive {
+            overflow-x: auto;
+            width: 100%;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.88rem;
+        }
+
+        th {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 0.85rem 1rem;
+            font-weight: 700;
+            color: #a5b4fc;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+        }
+
+        td {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 1rem;
+            color: #e5e7eb;
+            font-weight: 500;
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.01);
+        }
+
+        /* Status colors */
+        .badge-status {
+            display: inline-block;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 0.2rem 0.5rem;
+            border-radius: 5px;
+            letter-spacing: 0.03em;
+        }
+
+        .badge-restored {
+            background: rgba(16, 185, 129, 0.1);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .badge-failed {
+            background: rgba(239, 68, 68, 0.1);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .badge-processing {
+            background: rgba(245, 158, 11, 0.1);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        /* Actions buttons inside table */
+        .table-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-mini {
+            padding: 0.3rem 0.6rem;
+            font-size: 0.75rem;
+            border-radius: 6px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid transparent;
+        }
+
+        .btn-mini-view {
+            background: rgba(99, 102, 241, 0.1);
+            color: #a5b4fc;
+            border-color: rgba(99, 102, 241, 0.2);
+        }
+
+        .btn-mini-view:hover {
+            background: rgba(99, 102, 241, 0.25);
+            color: white;
+        }
+
+        .btn-mini-del {
+            background: rgba(239, 68, 68, 0.1);
+            color: #f87171;
+            border-color: rgba(239, 68, 68, 0.2);
+        }
+
+        .btn-mini-del:hover {
+            background: rgba(239, 68, 68, 0.25);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Navigation Header -->
+    <nav class="nav-bar">
+        <a href="/" class="nav-brand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+            <span>PixelRevive AI</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Studio</a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/admin" class="nav-link active">Admin</a>
+        </div>
+    </nav>
+
+    <div class="bg-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>System Dashboard</h1>
+            <p class="subtitle">System performance, health metrics, and database statistics</p>
+        </header>
+
+        <!-- Stats Cards Grid -->
+        <section class="stats-grid">
+            <div class="stat-card">
+                <span class="stat-label">Total Uploads</span>
+                <span class="stat-value">{{ stats.total }}</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Success Rate</span>
+                <span class="stat-value">{{ stats.success_rate }}%</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Avg Pipeline Duration</span>
+                <span class="stat-value">{{ stats.avg_duration }}s</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Faces Restored</span>
+                <span class="stat-value">{{ stats.total_faces }}</span>
+            </div>
+        </section>
+
+        <!-- Breakdown Details -->
+        <section class="breakdown-row">
+            <div class="breakdown-card">
+                <h3 class="card-header-title">Status Distribution</h3>
+                <div class="breakdown-list">
+                    <div class="breakdown-item">
+                        <span class="breakdown-label" style="color: #34d399;">Success / Restored</span>
+                        <div class="breakdown-value-box">
+                            <span class="breakdown-count">{{ stats.restored }}</span>
+                            <span class="breakdown-pct">
+                                {{ '%.1f' | format((stats.restored / stats.total * 100) if stats.total > 0 else 0) }}%
+                            </span>
+                        </div>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label" style="color: #f87171;">Failed restorations</span>
+                        <div class="breakdown-value-box">
+                            <span class="breakdown-count">{{ stats.failed }}</span>
+                            <span class="breakdown-pct">
+                                {{ '%.1f' | format((stats.failed / stats.total * 100) if stats.total > 0 else 0) }}%
+                            </span>
+                        </div>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label" style="color: #fbbf24;">In-flight / Processing</span>
+                        <div class="breakdown-value-box">
+                            <span class="breakdown-count">{{ stats.processing }}</span>
+                            <span class="breakdown-pct">
+                                {{ '%.1f' | format((stats.processing / stats.total * 100) if stats.total > 0 else 0) }}%
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="breakdown-card">
+                <h3 class="card-header-title">Model Specifications</h3>
+                <div class="breakdown-list">
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Damage Mask &amp; Inpaint</span>
+                        <span class="breakdown-count" style="color: #c7d2fe;">LaMa TorchScript</span>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Selective Colorization</span>
+                        <span class="breakdown-count" style="color: #c7d2fe;">DDColor (Paper weights)</span>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Face Restorer</span>
+                        <span class="breakdown-count" style="color: #c7d2fe;">CodeFormer v0.1.0</span>
+                    </div>
+                    <div class="breakdown-item">
+                        <span class="breakdown-label">Super-Resolution</span>
+                        <span class="breakdown-count" style="color: #c7d2fe;">Real-ESRGAN x4plus</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Recent Activities Table -->
+        <section class="table-card">
+            <h3 class="card-header-title">Recent Restoration Activities</h3>
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Filename</th>
+                            <th>Upload Time</th>
+                            <th>Duration</th>
+                            <th>Faces</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if recent_images %}
+                            {% for img in recent_images %}
+                                <tr id="row-{{ img.id }}">
+                                    <td>#{{ img.id }}</td>
+                                    <td style="font-family: monospace; word-break: break-all;">{{ img.filename }}</td>
+                                    <td>{{ img.upload_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                    <td>{{ '%.1f' | format(img.duration or 0) }}s</td>
+                                    <td>{{ img.faces_detected or 0 }}</td>
+                                    <td>
+                                        <span class="badge-status badge-{{ img.status }}">{{ img.status }}</span>
+                                    </td>
+                                    <td>
+                                        <div class="table-actions">
+                                            <a class="btn-mini btn-mini-view" href="/history?search={{ img.filename }}">View</a>
+                                            <button type="button" class="btn-mini btn-mini-del" onclick="deleteEntry({{ img.id }})">Delete</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                                    No restoration actions logged yet.
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // ─── Delete Actions ───────────────────────────────────────────────────
+        async function deleteEntry(id) {
+            if (!confirm('Are you sure you want to delete this log entry and all associated image files?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/delete/${id}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+
+                if (response.ok && data.status === 'success') {
+                    const row = document.getElementById(`row-${id}`);
+                    if (row) {
+                        row.style.opacity = '0';
+                        row.style.transform = 'translateX(20px)';
+                        row.style.transition = 'all 0.4s ease';
+                        setTimeout(() => {
+                            row.remove();
+                            // Reload to update stats counts
+                            window.location.reload();
+                        }, 400);
+                    }
+                } else {
+                    alert(`Error: ${data.error || 'Failed to delete.'}`);
+                }
+            } catch (err) {
+                alert('Network error. Failed to delete.');
+            }
+        }
+    </script>
+</body>
+</html>
