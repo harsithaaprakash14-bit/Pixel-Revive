@@ -4,9 +4,11 @@ PixelRevive — services/ai_connector.py
 Main AI pipeline entry point.  Called by app.py on every image upload.
 
 Pipeline order:
-  Step 1: [ACTIVE]  Person 1 — LaMa Damage Removal
-  Step 2: [ACTIVE]  Person 2 — DDColor Colorization
-  Step 3: [ACTIVE]  Person 3 — Real-ESRGAN 4x Upscaling (isolated subprocess)
+  Step 1: LaMa Damage Removal
+  Step 2: CodeFormer Face Restoration   (before colorization for best fidelity)
+  Step 3: DDColor Colorization
+  Step 4: Real-ESRGAN 4x Upscaling     (isolated subprocess)
+  Step 5: Final Enhancement            (unsharp, CLAHE, edge — CPU/OpenCV only)
 
 The pipeline is deliberately linear: each step receives the output of the previous.
 GPU memory is explicitly flushed between every step so the HAMI 2 GiB virtual
@@ -18,6 +20,8 @@ MODIFICATIONS (from original):
   2. Added _get_damage_remover() lazy-load cache (mirrors _get_colorizer()).
   3. Added GPU cleanup after Step 1 (same pattern as after Step 2).
   4. Added _cleanup_gpu_memory() utility called between every pipeline stage.
+  5. Moved Face Restoration before Colorization for better identity preservation.
+  6. Added Stage 5 Final Enhancement (services/enhancer.py) after upscaling.
 """
 
 import gc
@@ -200,10 +204,14 @@ def process_image(input_path):
 
     current_path = input_path
 
+    # restoration_meta is populated by Stage 1 and forwarded to the caller
+    restoration_meta = {}
+
     # --- Stage 1: Damage Removal ---
     step1_output = os.path.join(outputs_dir, f"{name}_repaired{ext}")
     
     def run_stage_1(low_mem):
+        nonlocal restoration_meta
         if low_mem:
             unload_all_models()
             _log_mem("Damage Removal (Subprocess)", "Before")
@@ -212,13 +220,50 @@ def process_image(input_path):
             env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             command = [sys.executable, script_path, current_path, step1_output]
             result = subprocess.run(command, env=env, capture_output=True, text=True)
+            # Log stdout/stderr of subprocess
+            if result.stdout.strip():
+                for line in result.stdout.strip().splitlines():
+                    print(f"  [Damage Removal Subprocess] {line}")
+            if result.stderr.strip():
+                for line in result.stderr.strip().splitlines():
+                    print(f"  [Damage Removal Subprocess STDERR] {line}", file=sys.stderr)
             if result.returncode != 0:
                 raise RuntimeError(f"Damage Removal subprocess failed (code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+            # Parse meta stats from subprocess stdout
+            _restoration_meta = {}
+            for line in result.stdout.splitlines():
+                if "Crease detection:" in line:
+                    try:
+                        _restoration_meta["crease_px"] = int(line.split(":")[1].split("pixels")[0].strip())
+                    except Exception:
+                        pass
+                elif "Scratch/stain detection:" in line:
+                    try:
+                        _restoration_meta["scratch_px"] = int(line.split(":")[1].split("pixels")[0].strip())
+                    except Exception:
+                        pass
+                elif "Final damage mask:" in line:
+                    try:
+                        _restoration_meta["mask_coverage_pct"] = float(line.split(":")[1].split("%")[0].strip())
+                    except Exception:
+                        pass
+                elif "Protected" in line and "face region" in line:
+                    try:
+                        _restoration_meta["face_regions"] = int(line.split("Protected")[1].split("face")[0].strip())
+                    except Exception:
+                        pass
+            _restoration_meta.setdefault("crease_px", 0)
+            _restoration_meta.setdefault("scratch_px", 0)
+            _restoration_meta.setdefault("face_regions", 0)
+            _restoration_meta.setdefault("total_damage_pct", 0.0)
+            _restoration_meta.setdefault("mask_coverage_pct", 0.0)
+            restoration_meta = _restoration_meta
             _log_mem("Damage Removal (Subprocess)", "After")
         else:
             _log_mem("Damage Removal", "Before")
             from services.damage_remover import restore_image
-            restore_image(current_path, step1_output)
+            _, _meta = restore_image(current_path, step1_output)
+            restoration_meta = _meta
             _log_mem("Damage Removal", "After")
 
     try:
@@ -239,60 +284,11 @@ def process_image(input_path):
 
     current_path = step1_output
 
-    # --- Stage 2: Colorization ---
-    step2_output = os.path.join(outputs_dir, f"{name}_colorized{ext}")
-
-    from services.colorizer import is_grayscale_image
-    import cv2
-    import shutil
-    
-    img_cv = cv2.imread(current_path)
-    if img_cv is not None and not is_grayscale_image(img_cv):
-        print(f"[Colorizer] Image is already in color. Skipping colorization model loading.")
-        shutil.copy(current_path, step2_output)
-    else:
-        def run_stage_2(low_mem):
-            if low_mem:
-                unload_all_models()
-                _log_mem("Colorization (Subprocess)", "Before")
-                script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "colorizer.py")
-                env = os.environ.copy()
-                env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                command = [sys.executable, script_path, current_path, step2_output]
-                result = subprocess.run(command, env=env, capture_output=True, text=True)
-                if result.returncode != 0:
-                    raise RuntimeError(f"Colorization subprocess failed (code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
-                _log_mem("Colorization (Subprocess)", "After")
-            else:
-                _log_mem("Colorization", "Before")
-                from services.colorizer import load_colorizer, colorize_image
-                c = _get_colorizer()
-                colorize_image(c, current_path, step2_output)
-                _log_mem("Colorization", "After")
-
-        try:
-            run_stage_2(low_mem=low_memory_mode)
-        except Exception as e:
-            err_str = str(e).lower()
-            is_oom = "out of memory" in err_str or "oom" in err_str or isinstance(e, MemoryError)
-            if _TORCH_AVAILABLE and hasattr(_torch.cuda, 'OutOfMemoryError') and isinstance(e, _torch.cuda.OutOfMemoryError):
-                is_oom = True
-            
-            if is_oom and not low_memory_mode:
-                print(f"[MEMORY WARNING] OOM in Normal Mode during Colorization. Retrying in Low-Memory Mode...")
-                low_memory_mode = True
-                unload_all_models()
-                run_stage_2(low_mem=True)
-            else:
-                raise e
-
-    current_path = step2_output
-
-    # --- Stage 2.5: Face Restoration ---
-    step2_5_output = os.path.join(outputs_dir, f"{name}_face_restored{ext}")
+    # --- Stage 2: Face Restoration (before colorization for best identity fidelity) ---
+    step2_output = os.path.join(outputs_dir, f"{name}_face_restored{ext}")
     faces_detected_count = 0
 
-    def run_stage_2_5(low_mem):
+    def run_stage_2(low_mem):
         nonlocal faces_detected_count
         if low_mem:
             unload_all_models()
@@ -300,11 +296,18 @@ def process_image(input_path):
             script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_restorer.py")
             env = os.environ.copy()
             env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            command = [sys.executable, script_path, current_path, step2_5_output]
+            command = [sys.executable, script_path, current_path, step2_output]
             result = subprocess.run(command, env=env, capture_output=True, text=True)
+            # Log stdout/stderr of subprocess
+            if result.stdout.strip():
+                for line in result.stdout.strip().splitlines():
+                    print(f"  [Face Restoration Subprocess] {line}")
+            if result.stderr.strip():
+                for line in result.stderr.strip().splitlines():
+                    print(f"  [Face Restoration Subprocess STDERR] {line}", file=sys.stderr)
             if result.returncode != 0:
                 raise RuntimeError(f"Face Restoration subprocess failed (code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
-            
+
             # Parse faces detected count from stdout
             faces_detected_count = 0
             for line in result.stdout.splitlines():
@@ -320,59 +323,131 @@ def process_image(input_path):
         else:
             _log_mem("Face Restoration", "Before")
             from services.face_restorer import restore_faces
-            faces_detected_count = restore_faces(current_path, step2_5_output)
+            faces_detected_count = restore_faces(current_path, step2_output)
             _log_mem("Face Restoration", "After")
 
     try:
-        run_stage_2_5(low_mem=low_memory_mode)
+        run_stage_2(low_mem=low_memory_mode)
     except Exception as e:
         err_str = str(e).lower()
         is_oom = "out of memory" in err_str or "oom" in err_str or isinstance(e, MemoryError)
         if _TORCH_AVAILABLE and hasattr(_torch.cuda, 'OutOfMemoryError') and isinstance(e, _torch.cuda.OutOfMemoryError):
             is_oom = True
-        
+
         if is_oom and not low_memory_mode:
             print(f"[MEMORY WARNING] OOM in Normal Mode during Face Restoration. Retrying in Low-Memory Mode...")
             low_memory_mode = True
             unload_all_models()
-            run_stage_2_5(low_mem=True)
+            run_stage_2(low_mem=True)
         else:
             raise e
 
-    current_path = step2_5_output
+    current_path = step2_output
 
-    # --- Stage 3: Upscaling (Isolated Conda Env Subprocess) ---
-    def run_stage_3(low_mem):
+    # --- Stage 3: Colorization ---
+    step3_output = os.path.join(outputs_dir, f"{name}_colorized{ext}")
+
+    from services.colorizer import is_grayscale_image
+    import cv2
+    import shutil
+
+    img_cv = cv2.imread(current_path)
+    if img_cv is not None and not is_grayscale_image(img_cv):
+        print(f"[Colorizer] Image is already in color. Skipping colorization model loading.")
+        shutil.copy(current_path, step3_output)
+    else:
+        def run_stage_3(low_mem):
+            if low_mem:
+                unload_all_models()
+                _log_mem("Colorization (Subprocess)", "Before")
+                script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "colorizer.py")
+                env = os.environ.copy()
+                env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                command = [sys.executable, script_path, current_path, step3_output]
+                result = subprocess.run(command, env=env, capture_output=True, text=True)
+                # Log stdout/stderr of subprocess
+                if result.stdout.strip():
+                    for line in result.stdout.strip().splitlines():
+                        print(f"  [Colorization Subprocess] {line}")
+                if result.stderr.strip():
+                    for line in result.stderr.strip().splitlines():
+                        print(f"  [Colorization Subprocess STDERR] {line}", file=sys.stderr)
+                if result.returncode != 0:
+                    raise RuntimeError(f"Colorization subprocess failed (code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+                _log_mem("Colorization (Subprocess)", "After")
+            else:
+                _log_mem("Colorization", "Before")
+                from services.colorizer import load_colorizer, colorize_image
+                c = _get_colorizer()
+                colorize_image(c, current_path, step3_output)
+                _log_mem("Colorization", "After")
+
+        try:
+            run_stage_3(low_mem=low_memory_mode)
+        except Exception as e:
+            err_str = str(e).lower()
+            is_oom = "out of memory" in err_str or "oom" in err_str or isinstance(e, MemoryError)
+            if _TORCH_AVAILABLE and hasattr(_torch.cuda, 'OutOfMemoryError') and isinstance(e, _torch.cuda.OutOfMemoryError):
+                is_oom = True
+
+            if is_oom and not low_memory_mode:
+                print(f"[MEMORY WARNING] OOM in Normal Mode during Colorization. Retrying in Low-Memory Mode...")
+                low_memory_mode = True
+                unload_all_models()
+                run_stage_3(low_mem=True)
+            else:
+                raise e
+
+    current_path = step3_output
+
+    # --- Stage 4: Upscaling (Isolated Conda Env Subprocess) ---
+    def run_stage_4(low_mem):
         if low_mem:
             unload_all_models()
         _log_mem("Upscaling", "Before")
         try:
             from services.upscaler import run_upscaler
-            step3_output = os.path.join(outputs_dir, f"{name}_4x.png")
-            run_upscaler(current_path, step3_output, scale=4, fmt="PNG")
-            return step3_output
+            step4_output = os.path.join(outputs_dir, f"{name}_4x.png")
+            run_upscaler(current_path, step4_output, scale=4, fmt="PNG")
+            return step4_output
         finally:
             _log_mem("Upscaling", "After")
 
     try:
-        step3_output = run_stage_3(low_mem=low_memory_mode)
+        step4_output = run_stage_4(low_mem=low_memory_mode)
     except Exception as e:
         err_str = str(e).lower()
         is_oom = "out of memory" in err_str or "oom" in err_str or isinstance(e, MemoryError)
         if _TORCH_AVAILABLE and hasattr(_torch.cuda, 'OutOfMemoryError') and isinstance(e, _torch.cuda.OutOfMemoryError):
             is_oom = True
-        
+
         if is_oom and not low_memory_mode:
             print(f"[MEMORY WARNING] OOM in Normal Mode during Upscaling. Retrying in Low-Memory Mode...")
             low_memory_mode = True
             unload_all_models()
-            step3_output = run_stage_3(low_mem=True)
+            step4_output = run_stage_4(low_mem=True)
         else:
             raise e
 
-    current_path = step3_output
+    current_path = step4_output
+
+    # --- Stage 5: Final Enhancement (CPU/OpenCV — no GPU required) ---
+    _log_mem("Final Enhancement", "Before")
+    try:
+        step5_output = os.path.join(outputs_dir, f"{name}_final.png")
+        
+        # Run final visual enhancement (detail sharpening, contrast, textures)
+        from services.enhancer import enhance_final_output
+        enhance_final_output(current_path, step5_output)
+        current_path = step5_output
+        print("[OK] Final enhancement complete.")
+    except Exception as e:
+        # Non-fatal: if enhancement fails, continue with upscaled output
+        print(f"[WARNING] Final enhancement/refinement failed (non-fatal): {e}. Using upscaled output.")
+    _log_mem("Final Enhancement & Face Refinement", "After")
 
     return {
-        'processed_path': current_path,
-        'faces_detected': faces_detected_count
+        'processed_path':    current_path,
+        'faces_detected':    faces_detected_count,
+        'restoration_meta':  restoration_meta,
     }

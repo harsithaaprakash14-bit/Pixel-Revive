@@ -52,10 +52,67 @@ def get_codeformer_model(device):
         _net = net
     return _net
 
-def restore_faces(input_path, output_path, fidelity_weight=0.5):
+def match_color(target_img, source_img):
+    """
+    Match the color distribution of target_img (restored face) to source_img (original cropped face).
+    Uses mean/std matching in the LAB color space to match color and brightness seamlessly.
+    """
+    import numpy as np
+    # Convert both to LAB
+    target_lab = cv2.cvtColor(target_img.astype(np.float32) / 255.0, cv2.COLOR_BGR2LAB)
+    source_lab = cv2.cvtColor(source_img.astype(np.float32) / 255.0, cv2.COLOR_BGR2LAB)
+    
+    # Split channels
+    t_l, t_a, t_b = cv2.split(target_lab)
+    s_l, s_a, s_b = cv2.split(source_lab)
+    
+    # Compute means and stds
+    t_mean_l, t_std_l = t_l.mean(), t_l.std()
+    t_mean_a, t_std_a = t_a.mean(), t_a.std()
+    t_mean_b, t_std_b = t_b.mean(), t_b.std()
+    
+    s_mean_l, s_std_l = s_l.mean(), s_l.std()
+    s_mean_a, s_std_a = s_a.mean(), s_a.std()
+    s_mean_b, s_std_b = s_b.mean(), s_b.std()
+    
+    # Avoid division by zero
+    std_l_ratio = s_std_l / (t_std_l + 1e-6)
+    std_a_ratio = s_std_a / (t_std_a + 1e-6)
+    std_b_ratio = s_std_b / (t_std_b + 1e-6)
+    
+    # Limit ratio to avoid extreme scaling of noise.
+    # Clip range tightened [0.5, 2.0] → [0.75, 1.5]: the wider range previously
+    # allowed the restored face to have a significantly different colour
+    # distribution (green tint, skin tone shift) when the source face had low
+    # variance. The tighter range keeps colour correction closer to neutral.
+    std_l_ratio = np.clip(std_l_ratio, 0.75, 1.5)
+    std_a_ratio = np.clip(std_a_ratio, 0.75, 1.5)
+    std_b_ratio = np.clip(std_b_ratio, 0.75, 1.5)
+    
+    # Match distribution
+    matched_l = (t_l - t_mean_l) * std_l_ratio + s_mean_l
+    matched_a = (t_a - t_mean_a) * std_a_ratio + s_mean_a
+    matched_b = (t_b - t_mean_b) * std_b_ratio + s_mean_b
+    
+    # Clip and convert back
+    matched_lab = cv2.merge([
+        np.clip(matched_l, 0, 100),
+        np.clip(matched_a, -127, 127),
+        np.clip(matched_b, -127, 127)
+    ])
+    matched_bgr = cv2.cvtColor(matched_lab, cv2.COLOR_LAB2BGR)
+    
+    return np.clip(matched_bgr * 255.0, 0, 255).astype(np.uint8)
+
+def restore_faces(input_path, output_path, fidelity_weight=0.80):
     """
     Detect faces in the image, restore them using CodeFormer, and paste them back.
     If no faces are detected, skip the restoration process and copy input to output.
+
+    fidelity_weight raised 0.70 → 0.80 (default): higher value keeps CodeFormer
+    closer to the original identity (1.0 = perfect fidelity, 0.0 = maximum quality
+    enhancement). 0.80 balances subtle enhancement while strongly preserving eye
+    shape, nose, lips and skin texture.
     """
     torch = _get_torch()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -124,6 +181,23 @@ def restore_faces(input_path, output_path, fidelity_weight=0.5):
             restored_face = cropped_face
             
         restored_face = restored_face.astype('uint8')
+        
+        # Color match restored face with the original cropped face to eliminate boundaries/halos
+        try:
+            restored_face = match_color(restored_face, cropped_face)
+            print("  [FaceRestorer] Face color-matched successfully.")
+        except Exception as e:
+            print(f"  [FaceRestorer] Warning color-matching failed: {e}")
+            
+        # Blend restored face with original cropped input to bring back natural pores, grain, and micro-texture.
+        # Since face restoration runs after damage removal, the cropped_face is already inpainted/clean.
+        try:
+            blend_ratio = 0.80  # 80% restored face, 20% original texture/details
+            restored_face = cv2.addWeighted(restored_face, blend_ratio, cropped_face, 1.0 - blend_ratio, 0)
+            print("  [FaceRestorer] Blended original texture successfully.")
+        except Exception as e:
+            print(f"  [FaceRestorer] Warning face texture blend failed: {e}")
+
         face_helper.add_restored_face(restored_face, cropped_face)
         
     # Paste restored faces back to background

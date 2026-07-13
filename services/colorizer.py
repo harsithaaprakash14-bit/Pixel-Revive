@@ -89,7 +89,7 @@ def load_colorizer():
           f"(input_size={COLORIZER_INPUT_SIZE})")
     return ColorizationPipeline(model, input_size=COLORIZER_INPUT_SIZE)
 
-def is_grayscale_image(img, threshold=20, percentage=15.0):
+def is_grayscale_image(img, threshold=15, percentage=5.0):
     """
     Determine if an image is grayscale/monochrome.
     If the image has fewer than 3 channels, it is grayscale.
@@ -191,5 +191,15 @@ if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("Usage: python3 colorize.py <input_image> <output_image>")
         sys.exit(1)
+        
+    # Check if the image is already in color BEFORE loading the heavy 900MB model!
+    import cv2
+    img_bgr = cv2.imread(sys.argv[1])
+    if img_bgr is not None and not is_grayscale_image(img_bgr):
+        import shutil
+        print(f"[DDColor] Image is already in color. Skipping model loading in CLI.")
+        shutil.copy(sys.argv[1], sys.argv[2])
+        sys.exit(0)
+        
     colorizer = load_colorizer()
     colorize_image(colorizer, sys.argv[1], sys.argv[2])

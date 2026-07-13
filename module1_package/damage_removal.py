@@ -72,61 +72,90 @@ def _get_face_regions(gray_img):
 # ─────────────────────────────────────────────
 def _detect_creases(gray_img):
     """
-    Detect paper fold/crease lines using:
-    1. Adaptive thresholding to find bright crease highlights
-    2. Canny edge detection on blurred image for line structure
-    3. Probabilistic Hough Transform to find long straight lines (folds)
-    4. Morphological dilation to widen crease mask slightly for full coverage
+    Detect paper fold/crease lines using a multi-scale Hessian-based ridge filter
+    (Frangi filter), adaptive percentile-based thresholding, connected component
+    structural filtering, and Hough Line detection.
+    
+    This detects long paper folds, vertical, horizontal, and diagonal creases
+    more accurately while suppressing high-frequency noise and real image edges.
     """
+    from skimage.filters import frangi
+
     h, w = gray_img.shape
-    crease_mask = np.zeros((h, w), dtype=np.uint8)
-
-    # --- Method 1: Bright crease highlight detection ---
-    # Fold lines often appear as bright streaks in old photos
-    blurred = cv2.GaussianBlur(gray_img, (5, 5), 0)
-    bright_thresh = cv2.adaptiveThreshold(
-        blurred, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        blockSize=15, C=-10
-    )
-    # Keep only elongated bright regions (not small dots/noise)
-    kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
-    kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25))
-    bright_h = cv2.morphologyEx(bright_thresh, cv2.MORPH_OPEN, kernel_h)
-    bright_v = cv2.morphologyEx(bright_thresh, cv2.MORPH_OPEN, kernel_v)
-    bright_lines = cv2.bitwise_or(bright_h, bright_v)
-    crease_mask = cv2.bitwise_or(crease_mask, bright_lines)
-
-    # --- Method 2: Hough line detection for straight fold lines ---
-    edges = cv2.Canny(blurred, threshold1=30, threshold2=100)
+    
+    # 1. Resize large images for faster, scale-robust detection
+    max_dim = 800
+    scale = 1.0
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        gray_resized = cv2.resize(gray_img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    else:
+        gray_resized = gray_img.copy()
+        
+    hr, wr = gray_resized.shape
+    
+    # 2. Local contrast enhancement via CLAHE to highlight faint crease lines
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray_enhanced = clahe.apply(gray_resized)
+    
+    # 3. Apply Frangi filter at multiple scales to detect ridges/valleys of any orientation
+    # Sigmas match thin, medium, and thick fold structures at this resolution
+    sigmas = [1.0, 2.0, 3.0]
+    frangi_dark = frangi(gray_enhanced, sigmas=sigmas, black_ridges=True)
+    frangi_light = frangi(gray_enhanced, sigmas=sigmas, black_ridges=False)
+    frangi_comb = np.maximum(frangi_dark, frangi_light)
+    
+    # 4. Adaptive thresholding using percentiles to adapt to varying contrast/grain levels
+    # A conservative 97th percentile captures lines while limiting noise coverage
+    thresh_val = max(0.04, np.percentile(frangi_comb, 97.0))
+    binary_frangi = (frangi_comb > thresh_val).astype(np.uint8) * 255
+    
+    # 5. Connected component structural filtering
+    # Discards small noise components, keeping only elongated or large line structures
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_frangi)
+    cc_mask = np.zeros_like(binary_frangi)
+    for i in range(1, num_labels):
+        bw = stats[i, cv2.CC_STAT_WIDTH]
+        bh = stats[i, cv2.CC_STAT_HEIGHT]
+        diag = np.sqrt(bw**2 + bh**2)
+        aspect_ratio = max(bw, bh) / max(1, min(bw, bh))
+        
+        # Keep components that represent elongated or long creases/curves
+        if diag > 25 or (diag > 10 and aspect_ratio > 1.8):
+            cc_mask[labels == i] = 255
+            
+    # 6. Hough Line Detection on binary Frangi map (for straight, long folds)
+    # Allows lines at any angle, solving vertical/horizontal constraints
+    min_line_len = int(min(hr, wr) * 0.1)  # line must span at least 10% of resized image
     lines = cv2.HoughLinesP(
-        edges,
+        binary_frangi,
         rho=1, theta=np.pi / 180,
-        threshold=80,
-        minLineLength=int(min(h, w) * 0.25),  # line must span 25% of image
-        maxLineGap=20
+        threshold=40,
+        minLineLength=min_line_len,
+        maxLineGap=15
     )
+    
+    hough_mask = np.zeros_like(binary_frangi)
     if lines is not None:
         for x1, y1, x2, y2 in lines.reshape(-1, 4):
-            # Only accept near-horizontal or near-vertical lines (folds are straight)
-            angle = abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
-            if angle < 15 or angle > 165 or (75 < angle < 105):
-                cv2.line(crease_mask, (x1, y1), (x2, y2), 255, thickness=4)
-
-    # --- Method 3: Dark crease shadow detection ---
-    # Some folds appear as dark shadows rather than bright highlights
-    _, dark_thresh = cv2.threshold(blurred, 20, 255, cv2.THRESH_BINARY_INV)
-    dark_h = cv2.morphologyEx(dark_thresh, cv2.MORPH_OPEN, kernel_h)
-    dark_v = cv2.morphologyEx(dark_thresh, cv2.MORPH_OPEN, kernel_v)
-    dark_lines = cv2.bitwise_or(dark_h, dark_v)
-    crease_mask = cv2.bitwise_or(crease_mask, dark_lines)
-
-    # Dilate to ensure full crease width is covered
-    dilation_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    crease_mask = cv2.dilate(crease_mask, dilation_kernel, iterations=2)
+            cv2.line(hough_mask, (x1, y1), (x2, y2), 255, thickness=2)
+            
+    # Combine connected components and Hough lines
+    combined_crease = cv2.bitwise_or(cc_mask, hough_mask)
+    
+    # 7. Resize mask back to original resolution
+    crease_mask = cv2.resize(combined_crease, (w, h), interpolation=cv2.INTER_NEAREST)
+    
+    # 8. Dilate to cover the full width of creases (using dynamic ellipse kernel)
+    # The kernel size scales dynamically with image resolution
+    kernel_size = max(3, int(min(h, w) * 0.005))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    dilation_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    crease_mask = cv2.dilate(crease_mask, dilation_kernel, iterations=1)
 
     return crease_mask
+
 
 
 # ─────────────────────────────────────────────
