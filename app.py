@@ -18,6 +18,10 @@ app.config.from_object(Config)
 # Initialize database
 db.init_app(app)
 
+# Auto-create database tables on first startup (idempotent)
+with app.app_context():
+    db.create_all()
+
 ALLOWED_EXTENSIONS = app.config['ALLOWED_EXTENSIONS']
 
 # Ensure required folders exist
