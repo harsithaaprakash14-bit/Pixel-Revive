@@ -722,6 +722,7 @@ def generate_damage_mask(img_bgr: np.ndarray):
     combined = cv2.bitwise_or(crease_mask, scratch_mask)
     combined = cv2.bitwise_or(combined, crack_network_mask)
     total_damage_pct = round(float(np.sum(combined > 0) / combined.size) * 100, 2)
+    print(f"  [Mask] Total damage: {total_damage_pct}%")
 
     # ── Protect face regions ──────────────────────────────────────────────────
     face_region  = _get_face_regions(gray)

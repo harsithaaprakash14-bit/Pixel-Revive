@@ -247,6 +247,11 @@ def process_image(input_path):
                         _restoration_meta["mask_coverage_pct"] = float(line.split(":")[1].split("%")[0].strip())
                     except Exception:
                         pass
+                elif "Total damage:" in line:
+                    try:
+                        _restoration_meta["total_damage_pct"] = float(line.split(":")[1].split("%")[0].strip())
+                    except Exception:
+                        pass
                 elif "Protected" in line and "face region" in line:
                     try:
                         _restoration_meta["face_regions"] = int(line.split("Protected")[1].split("face")[0].strip())

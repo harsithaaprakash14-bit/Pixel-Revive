@@ -39,3 +39,11 @@ Thumbs.db
 # Test cache
 .pytest_cache/
 *.swap
+
+# Temporary/Generated Test Files & Audit Logs
+debug_mask.png
+audit_results.json
+test_images/
+.*.swp
+*.swp
+

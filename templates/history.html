@@ -616,6 +616,23 @@
                     <label for="end_date">To Date</label>
                     <input type="date" id="end_date" name="end_date" class="form-control" value="{{ filters.end_date }}">
                 </div>
+                <div class="form-group">
+                    <label for="date_filter">Quick Date</label>
+                    <select id="date_filter" name="date_filter" class="form-control">
+                        <option value="">All Time</option>
+                        <option value="today" {% if filters.date_filter == 'today' %}selected{% endif %}>Today</option>
+                        <option value="7_days" {% if filters.date_filter == '7_days' %}selected{% endif %}>Last 7 Days</option>
+                        <option value="30_days" {% if filters.date_filter == '30_days' %}selected{% endif %}>Last 30 Days</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="sort_by">Sort By</label>
+                    <select id="sort_by" name="sort_by" class="form-control">
+                        <option value="newest" {% if filters.sort_by == 'newest' %}selected{% endif %}>Newest First</option>
+                        <option value="oldest" {% if filters.sort_by == 'oldest' %}selected{% endif %}>Oldest First</option>
+                        <option value="duration" {% if filters.sort_by == 'duration' %}selected{% endif %}>Pipeline Duration</option>
+                    </select>
+                </div>
                 <div class="filter-buttons">
                     <button type="submit" class="btn btn-primary">Filter</button>
                     <a href="/history" class="btn btn-secondary">Clear</a>
@@ -654,11 +671,20 @@
                                         <span>{{ img.upload_time.strftime('%Y-%m-%d %H:%M:%S') }}</span>
                                     </div>
                                     {% if img.status == 'restored' %}
-                                        <div class="item-meta-item">
+                                        <div class="item-meta-item" title="Pipeline Duration">
                                             <span>⏱ {{ '%.1f' | format(img.duration or 0) }}s</span>
                                         </div>
-                                        <div class="item-meta-item">
+                                        <div class="item-meta-item" title="Faces Detected">
                                             <span>👤 {{ img.faces_detected or 0 }} faces</span>
+                                        </div>
+                                        <div class="item-meta-item" title="Creases Removed">
+                                            <span>🩹 {{ img.crease_px or 0 }} px creases</span>
+                                        </div>
+                                        <div class="item-meta-item" title="Scratches/Stains Removed">
+                                            <span>🪄 {{ img.scratch_px or 0 }} px scratches</span>
+                                        </div>
+                                        <div class="item-meta-item" title="Total Damage Area">
+                                            <span>📊 {{ img.total_damage_pct or 0.0 }}% damage</span>
                                         </div>
                                     {% endif %}
                                     <div>
@@ -677,6 +703,15 @@
                                             <line x1="12" y1="15" x2="12" y2="3"></line>
                                         </svg>
                                     </a>
+                                    <button type="button" class="action-btn btn-dl" title="Export PDF Report" onclick="exportPDF({{ img.id }})">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                            <polyline points="14 2 14 8 20 8"></polyline>
+                                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                                            <polyline points="10 9 9 9 8 9"></polyline>
+                                        </svg>
+                                    </button>
                                 {% endif %}
                                 <button type="button" class="action-btn btn-del" title="Delete Entry" onclick="confirmDelete({{ img.id }})">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -764,6 +799,126 @@
                 }
             } catch (err) {
                 alert('Network error. Failed to delete entry.');
+            }
+        }
+
+        // ─── PDF Report Generation (jsPDF & html2canvas) ─────────────────────
+        async function exportPDF(imageId) {
+            try {
+                document.body.style.cursor = 'wait';
+                
+                const response = await fetch(`/api/image/${imageId}`);
+                if (!response.ok) throw new Error('Failed to fetch image details.');
+                const imgData = await response.json();
+                
+                let reportContainer = document.getElementById('pdf-report-container');
+                if (!reportContainer) {
+                    reportContainer = document.createElement('div');
+                    reportContainer.id = 'pdf-report-container';
+                    reportContainer.style.position = 'absolute';
+                    reportContainer.style.left = '-9999px';
+                    reportContainer.style.top = '-9999px';
+                    reportContainer.style.width = '800px';
+                    reportContainer.style.padding = '40px';
+                    reportContainer.style.background = '#0b0c10';
+                    reportContainer.style.color = '#f3f4f6';
+                    reportContainer.style.fontFamily = "'Plus Jakarta Sans', sans-serif";
+                    
+                    document.body.appendChild(reportContainer);
+                }
+                
+                reportContainer.innerHTML = `
+                    <div style="border-bottom: 2px solid #6366f1; padding-bottom: 15px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h1 style="color: white; font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 800; margin: 0;">PixelRevive AI</h1>
+                            <p style="color: #9ca3af; font-size: 12px; margin: 5px 0 0 0;">Photo Restoration Analysis Report</p>
+                        </div>
+                        <div style="text-align: right;">
+                            <p style="color: #6366f1; font-size: 14px; font-weight: 700; margin: 0;">REPORT #\${imgData.id}</p>
+                            <p style="color: #9ca3af; font-size: 11px; margin: 5px 0 0 0;">\${new Date(imgData.upload_time).toLocaleString()}</p>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); padding: 15px; border-radius: 12px;">
+                            <h3 style="color: #a5b4fc; font-size: 12px; text-transform: uppercase; margin-top: 0; margin-bottom: 10px; font-family: 'Outfit', sans-serif; letter-spacing: 0.05em;">Image Properties</h3>
+                            <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">Filename:</td><td style="color: white; text-align: right; font-weight: 600; word-break: break-all;">\${imgData.filename}</td></tr>
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">Original Res:</td><td style="color: white; text-align: right; font-weight: 600;">\${imgData.original_resolution || 'Unknown'}</td></tr>
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">Output Res:</td><td style="color: white; text-align: right; font-weight: 600;">\${imgData.output_resolution || 'Unknown'}</td></tr>
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">File Size:</td><td style="color: white; text-align: right; font-weight: 600;">\${imgData.file_size ? (imgData.file_size / 1024).toFixed(0) + ' KB' : 'Unknown'}</td></tr>
+                            </table>
+                        </div>
+                        <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); padding: 15px; border-radius: 12px;">
+                            <h3 style="color: #a5b4fc; font-size: 12px; text-transform: uppercase; margin-top: 0; margin-bottom: 10px; font-family: 'Outfit', sans-serif; letter-spacing: 0.05em;">Restoration Metrics</h3>
+                            <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">Processing Time:</td><td style="color: white; text-align: right; font-weight: 600;">\${imgData.duration ? imgData.duration.toFixed(1) + 's' : 'N/A'}</td></tr>
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">Faces Restored:</td><td style="color: white; text-align: right; font-weight: 600;">\${imgData.faces_detected || 0}</td></tr>
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">Damage Area:</td><td style="color: white; text-align: right; font-weight: 600;">\${imgData.total_damage_pct ? imgData.total_damage_pct.toFixed(1) + '%' : '0.0%'}</td></tr>
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">Creases Removed:</td><td style="color: white; text-align: right; font-weight: 600;">\${imgData.crease_px || 0} px</td></tr>
+                                <tr><td style="color: #9ca3af; padding: 4px 0;">Scratches Removed:</td><td style="color: white; text-align: right; font-weight: 600;">\${imgData.scratch_px || 0} px</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                        <div style="flex: 1; text-align: center;">
+                            <p style="color: #9ca3af; font-size: 11px; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; letter-spacing: 0.05em;">Original Photo</p>
+                            <div style="border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 8px; background: rgba(0,0,0,0.3); height: 260px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                <img id="report-img-orig" style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px;">
+                            </div>
+                        </div>
+                        <div style="flex: 1; text-align: center;">
+                            <p style="color: #9ca3af; font-size: 11px; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; letter-spacing: 0.05em;">AI Restored</p>
+                            <div style="border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 8px; background: rgba(0,0,0,0.3); height: 260px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                <img id="report-img-proc" style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px;">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="border-top: 1px solid rgba(255, 255, 255, 0.06); padding-top: 15px; margin-top: 30px; text-align: center; font-size: 10px; color: #6b7280;">
+                        This report was automatically generated by the PixelRevive AI Photo Restoration engine.
+                    </div>
+                `;
+
+                const loadImg = (elId, src) => {
+                    return new Promise((resolve, reject) => {
+                        const img = document.getElementById(elId);
+                        img.onload = () => resolve();
+                        img.onerror = () => reject();
+                        img.src = src;
+                    });
+                };
+
+                await Promise.all([
+                    loadImg('report-img-orig', `/uploads/\${imgData.filename}`),
+                    loadImg('report-img-proc', `/uploads/\${imgData.processed_filename}`)
+                ]);
+
+                const canvas = await html2canvas(reportContainer, {
+                    backgroundColor: '#0b0c10',
+                    scale: 2
+                });
+
+                const imgWidth = 210;
+                const pageHeight = 295;
+                const imgHeight = (canvas.height * imgWidth) / canvas.width;
+                
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF('p', 'mm', 'a4');
+                const imgDataUri = canvas.toDataURL('image/png');
+                
+                const yOffset = imgHeight < pageHeight ? (pageHeight - imgHeight) / 2 : 0;
+                
+                pdf.addImage(imgDataUri, 'PNG', 0, yOffset, imgWidth, imgHeight);
+                pdf.save(`pixelrevive_report_\${imgData.id}.pdf`);
+                
+                reportContainer.innerHTML = '';
+            } catch (err) {
+                console.error(err);
+                alert('Failed to export PDF report. ' + err.message);
+            } finally {
+                document.body.style.cursor = 'default';
             }
         }
     </script>

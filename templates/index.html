@@ -1361,6 +1361,15 @@
             if (e.target.files.length) handleFile(e.target.files[0]);
         });
 
+        // Click on dropzone area triggers file picker
+        dropzone.addEventListener('click', (e) => {
+            if (isProcessing) return;
+            const browseBtn = document.getElementById('browse-btn');
+            if (e.target !== browseBtn && e.target !== fileInput) {
+                fileInput.click();
+            }
+        });
+
         // ─── Toast Helpers ────────────────────────────────────────────────────
         function showToast(message, type) {
             toast.className = `toast ${type}`;
@@ -1485,6 +1494,7 @@
             resultOrigSlider.src = '';
             resultProcSlider.src = '';
             downloadBtn.href = '#';
+            comparisonSlider.style.aspectRatio = '';
             isProcessing = false;
         }
 
