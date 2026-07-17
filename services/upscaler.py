@@ -18,7 +18,12 @@ import os
 import subprocess
 
 # Path to the isolated conda environment Python interpreter
-UPSCALER_PYTHON = "/home/ubuntu/miniconda3/envs/pixelrevive_upscaler/bin/python"
+_local_conda_path = "/home/ubuntu/miniconda3/envs/pixelrevive_upscaler/bin/python"
+if os.path.exists(_local_conda_path):
+    UPSCALER_PYTHON = _local_conda_path
+else:
+    import sys
+    UPSCALER_PYTHON = sys.executable
 
 # Path to Person 3's upscaler script (with MODEL_PATH and sys.exit already fixed)
 UPSCALER_SCRIPT = os.path.join(
