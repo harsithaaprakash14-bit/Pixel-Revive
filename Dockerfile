@@ -54,4 +54,4 @@ ENV FLASK_ENV=production \
 EXPOSE 10000
 
 # Start with Gunicorn
-CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-10000} --workers 2 --timeout 300 --worker-class sync --log-level info"]
+CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-10000} --workers 1 --timeout 300 --worker-class sync --log-level info"]

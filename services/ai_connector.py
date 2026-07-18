@@ -79,6 +79,40 @@ def _get_ram_usage():
     return 0.0
 
 def _get_system_available_ram():
+    import os
+    limit = None
+    usage = None
+    
+    # Try cgroups v2
+    if os.path.exists('/sys/fs/cgroup/memory.max') and os.path.exists('/sys/fs/cgroup/memory.current'):
+        try:
+            with open('/sys/fs/cgroup/memory.max', 'r') as f:
+                val = f.read().strip()
+                if val != 'max':
+                    limit = int(val)
+            with open('/sys/fs/cgroup/memory.current', 'r') as f:
+                usage = int(f.read().strip())
+        except Exception:
+            pass
+            
+    # Try cgroups v1
+    if limit is None or usage is None:
+        if os.path.exists('/sys/fs/cgroup/memory/memory.limit_in_bytes') and os.path.exists('/sys/fs/cgroup/memory/memory.usage_in_bytes'):
+            try:
+                with open('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'r') as f:
+                    limit = int(f.read().strip())
+                with open('/sys/fs/cgroup/memory/memory.usage_in_bytes', 'r') as f:
+                    usage = int(f.read().strip())
+            except Exception:
+                pass
+                
+    if limit is not None and usage is not None:
+        # Check if the limit is a realistic container limit (e.g. less than 100GB)
+        if limit < 100 * 1024 * 1024 * 1024:
+            available = (limit - usage) / (1024.0 * 1024.0)
+            return available
+
+    # Fallback to standard meminfo if cgroup limits are not defined or are set to system default
     try:
         with open('/proc/meminfo', 'r') as f:
             for line in f:
