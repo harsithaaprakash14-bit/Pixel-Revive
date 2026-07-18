@@ -1,6 +1,7 @@
 import os
 import uuid
 import time
+import threading
 from datetime import datetime, timezone, timedelta
 from flask import Flask, request, jsonify, render_template, send_from_directory, redirect, url_for
 from werkzeug.utils import secure_filename
@@ -10,6 +11,15 @@ from config import Config
 from models import db, RestorationImage
 from services.ai_connector import process_image
 from services.damage_remover import generate_damage_mask
+
+# ── In-memory job registry for async polling ──────────────────────────────────
+# Keyed by job_id (str). Each value is a dict:
+#   { 'status': 'processing'|'done'|'error',
+#     'result': {...} or None,
+#     'error': str or None,
+#     'image_id': int }          # DB record id — used to verify ownership
+_jobs = {}
+_jobs_lock = threading.Lock()
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -45,124 +55,184 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """
-    Handle file upload, validation, and trigger the AI processing pipeline (or only analysis).
+    Accept a file upload, save it to disk, create a DB record, start the AI
+    pipeline in a background thread, and immediately return a job_id.
+
+    The client must poll GET /status/<job_id> to learn when the job is done.
+    This design prevents Render's ~55 s reverse-proxy timeout from killing
+    the connection mid-pipeline and causing a frontend network error.
     """
     # 1. Check if the request has the file part
     if 'image' not in request.files:
         return jsonify({'error': 'No file part in the request'}), 400
-    
+
     file = request.files['image']
-    
+
     # 2. Check if the user submitted an empty file selection
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-    
-    # 3. Validate file type and process
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        
-        name, ext = os.path.splitext(filename)
-        unique_filename = f"{name}_{uuid.uuid4().hex[:8]}{ext}"
-        
-        input_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-        file.save(input_path)
-        
-        # Get file size & resolution
-        file_size = os.path.getsize(input_path)
-        try:
-            with Image.open(input_path) as img:
-                w, h = img.size
-                original_resolution = f"{w}x{h}"
-        except Exception:
-            w, h = 800, 600
-            original_resolution = "Unknown"
-        
-        # Save record to database (initial placeholder values, updated during processing)
-        try:
-            image_record = RestorationImage(
-                filename=unique_filename,
-                file_path=input_path,
-                status='uploaded',
-                original_resolution=original_resolution,
-                file_size=file_size,
-                crease_px=0,
-                scratch_px=0,
-                faces_detected=0,
-                total_damage_pct=0.0,
-                mask_coverage_pct=0.0
-            )
-            db.session.add(image_record)
-            db.session.commit()
-        except Exception as db_err:
-            db.session.rollback()
-            return jsonify({'error': f'Database logging failed: {str(db_err)}'}), 500
-        
-        # 4. Trigger the AI processing pipeline
-        image_record.status = 'processing'
+
+    # 3. Validate file type
+    if not (file and allowed_file(file.filename)):
+        return jsonify({'error': 'File type not allowed. Only JPG, JPEG, and PNG are permitted.'}), 400
+
+    filename = secure_filename(file.filename)
+    name, ext = os.path.splitext(filename)
+    unique_filename = f"{name}_{uuid.uuid4().hex[:8]}{ext}"
+    input_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+    file.save(input_path)
+
+    # 4. Read metadata before handing off to background thread
+    file_size = os.path.getsize(input_path)
+    try:
+        with Image.open(input_path) as img:
+            w, h = img.size
+            original_resolution = f"{w}x{h}"
+    except Exception:
+        original_resolution = "Unknown"
+
+    # 5. Save initial DB record
+    try:
+        image_record = RestorationImage(
+            filename=unique_filename,
+            file_path=input_path,
+            status='processing',
+            original_resolution=original_resolution,
+            file_size=file_size,
+            crease_px=0,
+            scratch_px=0,
+            faces_detected=0,
+            total_damage_pct=0.0,
+            mask_coverage_pct=0.0
+        )
+        db.session.add(image_record)
         db.session.commit()
-        
-        start_time = time.time()
-        try:
-            result = process_image(input_path)
-            duration = time.time() - start_time
-            processed_path = result['processed_path']
-            processed_filename = os.path.basename(processed_path)
-            faces_detected = result['faces_detected']
-            restoration_meta = result.get('restoration_meta', {})
-            
-            # Fetch output specs
-            output_resolution = "Unknown"
-            output_file_size = None
-            try:
-                with Image.open(processed_path) as out_img:
-                    out_w, out_h = out_img.size
-                    output_resolution = f"{out_w}x{out_h}"
-                output_file_size = os.path.getsize(processed_path)
-            except Exception:
-                pass
-            
-            # Update status to restored in database
-            image_record.status = 'restored'
-            image_record.processed_filename = processed_filename
-            image_record.duration = duration
-            image_record.faces_detected = faces_detected
-            image_record.output_resolution = output_resolution
-            image_record.output_file_size = output_file_size
-            
-            if restoration_meta:
-                image_record.crease_px = restoration_meta.get('crease_px', image_record.crease_px)
-                image_record.scratch_px = restoration_meta.get('scratch_px', image_record.scratch_px)
-                image_record.total_damage_pct = restoration_meta.get('total_damage_pct', image_record.total_damage_pct)
-                image_record.mask_coverage_pct = restoration_meta.get('mask_coverage_pct', image_record.mask_coverage_pct)
-                
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            duration = time.time() - start_time
-            print(f"[API ERROR] Pipeline failed: {str(e)}")
-            import traceback
-            traceback.print_exc()
+        image_id = image_record.id
+    except Exception as db_err:
+        db.session.rollback()
+        return jsonify({'error': f'Database logging failed: {str(db_err)}'}), 500
 
-            try:
-                image_record.status = 'failed'
-                image_record.duration = duration
-                db.session.commit()
-            except Exception as db_fail_err:
-                print(f"[API ERROR] Failed to update fail status in DB: {db_fail_err}")
-                db.session.rollback()
+    # 6. Register job slot BEFORE spawning thread (avoids a tiny race)
+    job_id = uuid.uuid4().hex
+    with _jobs_lock:
+        _jobs[job_id] = {
+            'status': 'processing',
+            'result': None,
+            'error': None,
+            'image_id': image_id,
+        }
 
-            return jsonify({'error': str(e)}), 500
-        
-        return jsonify({
-            'status': 'success',
-            'message': 'Image uploaded successfully!',
-            'original_image': unique_filename,
-            'processed_image': processed_filename,
-            'faces_detected': faces_detected,
-            'duration': round(duration, 2)
-        }), 200
-        
-    return jsonify({'error': 'File type not allowed. Only JPG, JPEG, and PNG are permitted.'}), 400
+    # 7. Run pipeline in background thread — does NOT block the HTTP response
+    def _run_pipeline(app_ctx, job_id, image_id, input_path):
+        with app_ctx:
+            start_time = time.time()
+            try:
+                result = process_image(input_path)
+                duration = time.time() - start_time
+                processed_path = result['processed_path']
+                processed_filename = os.path.basename(processed_path)
+                faces_detected = result['faces_detected']
+                restoration_meta = result.get('restoration_meta', {})
+
+                output_resolution = "Unknown"
+                output_file_size = None
+                try:
+                    with Image.open(processed_path) as out_img:
+                        out_w, out_h = out_img.size
+                        output_resolution = f"{out_w}x{out_h}"
+                    output_file_size = os.path.getsize(processed_path)
+                except Exception:
+                    pass
+
+                # Update DB
+                try:
+                    rec = db.session.get(RestorationImage, image_id)
+                    if rec:
+                        rec.status = 'restored'
+                        rec.processed_filename = processed_filename
+                        rec.duration = duration
+                        rec.faces_detected = faces_detected
+                        rec.output_resolution = output_resolution
+                        rec.output_file_size = output_file_size
+                        if restoration_meta:
+                            rec.crease_px = restoration_meta.get('crease_px', rec.crease_px)
+                            rec.scratch_px = restoration_meta.get('scratch_px', rec.scratch_px)
+                            rec.total_damage_pct = restoration_meta.get('total_damage_pct', rec.total_damage_pct)
+                            rec.mask_coverage_pct = restoration_meta.get('mask_coverage_pct', rec.mask_coverage_pct)
+                        db.session.commit()
+                except Exception as db_err:
+                    db.session.rollback()
+                    print(f"[BG THREAD] DB update failed: {db_err}")
+
+                with _jobs_lock:
+                    _jobs[job_id]['status'] = 'done'
+                    _jobs[job_id]['result'] = {
+                        'status': 'success',
+                        'message': 'Image uploaded successfully!',
+                        'original_image': os.path.basename(input_path),
+                        'processed_image': processed_filename,
+                        'faces_detected': faces_detected,
+                        'duration': round(duration, 2),
+                    }
+
+            except Exception as e:
+                duration = time.time() - start_time
+                print(f"[BG THREAD] Pipeline failed: {e}")
+                import traceback
+                traceback.print_exc()
+                try:
+                    rec = db.session.get(RestorationImage, image_id)
+                    if rec:
+                        rec.status = 'failed'
+                        rec.duration = duration
+                        db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                with _jobs_lock:
+                    _jobs[job_id]['status'] = 'error'
+                    _jobs[job_id]['error'] = str(e)
+
+    t = threading.Thread(
+        target=_run_pipeline,
+        args=(app.app_context(), job_id, image_id, input_path),
+        daemon=True,
+    )
+    t.start()
+
+    # 8. Return immediately so Render's proxy stays happy
+    return jsonify({'status': 'processing', 'job_id': job_id}), 202
+
+
+@app.route('/status/<job_id>', methods=['GET'])
+def job_status(job_id):
+    """
+    Poll endpoint for async upload jobs.
+
+    Returns:
+        200 + { status: 'processing' }          — still running
+        200 + { status: 'done', result: {...} }  — finished successfully
+        200 + { status: 'error', error: '...' }  — pipeline failed
+        404                                      — unknown job_id
+    """
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+
+    if job is None:
+        return jsonify({'error': 'Unknown job ID'}), 404
+
+    if job['status'] == 'processing':
+        return jsonify({'status': 'processing'}), 200
+
+    if job['status'] == 'done':
+        # Clean up job from memory after delivering result
+        with _jobs_lock:
+            _jobs.pop(job_id, None)
+        return jsonify({'status': 'done', 'result': job['result']}), 200
+
+    # error
+    with _jobs_lock:
+        _jobs.pop(job_id, None)
+    return jsonify({'status': 'error', 'error': job['error']}), 200
 
 
 @app.route('/restore/<int:image_id>', methods=['POST'])
