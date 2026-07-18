@@ -1576,48 +1576,19 @@
             formData.append('image', file);
 
             try {
-                const response = await fetch('/upload', {
+                // ── Phase 1: submit upload, get job_id back immediately ──────────
+                const uploadResp = await fetch('/upload', {
                     method: 'POST',
                     body: formData
                 });
 
-                const data = await response.json();
+                const uploadData = await uploadResp.json();
 
-                if (response.ok && data.status === 'success') {
-                    // Complete all loading indicators
-                    stages.forEach(st => {
-                        st.className = 'stage-item done';
-                    });
+                if (!uploadResp.ok || !uploadData.job_id) {
+                    // Immediate error from the upload endpoint (file validation etc.)
                     hideLoadingStatus();
-                    
-                    showToast(
-                        `✨ Restoration complete! Detected ${data.faces_detected} face(s) (Duration: ${data.duration}s).`,
-                        'success'
-                    );
-
-                    // Load resources
-                    resultOriginal.src = `/uploads/${data.original_image}`;
-                    resultProcessed.src = `/uploads/${data.processed_image}`;
-                    resultOrigSlider.src = `/uploads/${data.original_image}`;
-                    resultProcSlider.src = `/uploads/${data.processed_image}`;
-
-                    resultContainer.style.display = 'block';
-
-                    setTimeout(() => {
-                        resultContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }, 200);
-
-                    downloadBtn.href = `/download/${data.processed_image}`;
-
-                    btnSpinner.style.display = 'none';
-                    btnText.textContent = 'Restoration Completed ✓';
-                } else {
-                    hideLoadingStatus();
-                    let errorMsg = data.error || 'Image processing failed. Please try again.';
-
-                    if (errorMsg.includes('AI Processing failed')) {
-                        errorMsg = '⚠️ AI processing failed. The image may be corrupted or unsupported. Please try a different image.';
-                    } else if (errorMsg.includes('File type not allowed')) {
+                    let errorMsg = uploadData.error || 'Upload failed. Please try again.';
+                    if (errorMsg.includes('File type not allowed')) {
                         errorMsg = '🚫 Invalid file type. Only JPG, JPEG, and PNG images are accepted.';
                     } else if (errorMsg.includes('No file part')) {
                         errorMsg = '📎 No file was attached. Please select an image to upload.';
@@ -1626,14 +1597,101 @@
                     } else if (errorMsg.includes('Database')) {
                         errorMsg = '⚠️ A server error occurred while saving your image. Please try again.';
                     }
-
                     showToast(errorMsg, 'error');
                     setButtonsDisabled(false);
                     submitBtn.disabled = false;
                     btnSpinner.style.display = 'none';
                     btnText.textContent = 'Start Restoration';
                     isProcessing = false;
+                    return;
                 }
+
+                const jobId = uploadData.job_id;
+
+                // ── Phase 2: poll /status/<jobId> every 2 seconds ────────────────
+                const POLL_INTERVAL_MS = 2000;
+                const MAX_POLL_ATTEMPTS = 300; // 300 × 2s = 10 minutes max wait
+                let attempts = 0;
+
+                const poll = async () => {
+                    attempts++;
+                    if (attempts > MAX_POLL_ATTEMPTS) {
+                        hideLoadingStatus();
+                        showToast('⏱️ Restoration is taking longer than expected. Please refresh the page and check History.', 'error');
+                        setButtonsDisabled(false);
+                        submitBtn.disabled = false;
+                        btnSpinner.style.display = 'none';
+                        btnText.textContent = 'Start Restoration';
+                        isProcessing = false;
+                        return;
+                    }
+
+                    let statusData;
+                    try {
+                        const statusResp = await fetch(`/status/${jobId}`);
+                        statusData = await statusResp.json();
+                    } catch (pollErr) {
+                        // Transient network blip — retry rather than fail
+                        setTimeout(poll, POLL_INTERVAL_MS);
+                        return;
+                    }
+
+                    if (statusData.status === 'processing') {
+                        // Still running — come back in 2 seconds
+                        setTimeout(poll, POLL_INTERVAL_MS);
+                        return;
+                    }
+
+                    if (statusData.status === 'done') {
+                        const data = statusData.result;
+
+                        // Complete all loading indicators
+                        stages.forEach(st => {
+                            st.className = 'stage-item done';
+                        });
+                        hideLoadingStatus();
+
+                        showToast(
+                            `✨ Restoration complete! Detected ${data.faces_detected} face(s) (Duration: ${data.duration}s).`,
+                            'success'
+                        );
+
+                        // Load resources
+                        resultOriginal.src = `/uploads/${data.original_image}`;
+                        resultProcessed.src = `/uploads/${data.processed_image}`;
+                        resultOrigSlider.src = `/uploads/${data.original_image}`;
+                        resultProcSlider.src = `/uploads/${data.processed_image}`;
+
+                        resultContainer.style.display = 'block';
+
+                        setTimeout(() => {
+                            resultContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }, 200);
+
+                        downloadBtn.href = `/download/${data.processed_image}`;
+
+                        btnSpinner.style.display = 'none';
+                        btnText.textContent = 'Restoration Completed ✓';
+                        return;
+                    }
+
+                    // status === 'error'
+                    hideLoadingStatus();
+                    let errorMsg = statusData.error || 'Image processing failed. Please try again.';
+                    if (errorMsg.includes('AI Processing failed')) {
+                        errorMsg = '⚠️ AI processing failed. The image may be corrupted or unsupported.';
+                    }
+                    showToast(errorMsg, 'error');
+                    setButtonsDisabled(false);
+                    submitBtn.disabled = false;
+                    btnSpinner.style.display = 'none';
+                    btnText.textContent = 'Start Restoration';
+                    isProcessing = false;
+                };
+
+                // Kick off the first poll after a short delay
+                setTimeout(poll, POLL_INTERVAL_MS);
+
             } catch (err) {
                 hideLoadingStatus();
                 showToast(

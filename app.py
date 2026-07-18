@@ -1,6 +1,7 @@
 import os
 import uuid
 import time
+import threading
 from datetime import datetime, timezone, timedelta
 from flask import Flask, request, jsonify, render_template, send_from_directory, redirect, url_for
 from werkzeug.utils import secure_filename
@@ -10,6 +11,7 @@ from config import Config
 from models import db, RestorationImage
 from services.ai_connector import process_image
 from services.damage_remover import generate_damage_mask
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -45,124 +47,213 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """
-    Handle file upload, validation, and trigger the AI processing pipeline (or only analysis).
+    Accept a file upload, persist it to disk and the DB, then start the AI
+    pipeline in a daemon background thread.  Returns HTTP 202 immediately with
+    the DB image id as the polling job_id.
+
+    Job state is stored exclusively in the PostgreSQL database — NOT in any
+    in-process dict.  This means the /status endpoint can answer correctly
+    regardless of which Gunicorn worker handles the poll, even after a full
+    process restart caused by an OOM kill or Render health-check restart.
     """
-    # 1. Check if the request has the file part
+    # ── 1. File presence / type validation ────────────────────────────────────
     if 'image' not in request.files:
         return jsonify({'error': 'No file part in the request'}), 400
-    
+
     file = request.files['image']
-    
-    # 2. Check if the user submitted an empty file selection
+
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-    
-    # 3. Validate file type and process
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        
-        name, ext = os.path.splitext(filename)
-        unique_filename = f"{name}_{uuid.uuid4().hex[:8]}{ext}"
-        
-        input_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-        file.save(input_path)
-        
-        # Get file size & resolution
-        file_size = os.path.getsize(input_path)
-        try:
-            with Image.open(input_path) as img:
-                w, h = img.size
-                original_resolution = f"{w}x{h}"
-        except Exception:
-            w, h = 800, 600
-            original_resolution = "Unknown"
-        
-        # Save record to database (initial placeholder values, updated during processing)
-        try:
-            image_record = RestorationImage(
-                filename=unique_filename,
-                file_path=input_path,
-                status='uploaded',
-                original_resolution=original_resolution,
-                file_size=file_size,
-                crease_px=0,
-                scratch_px=0,
-                faces_detected=0,
-                total_damage_pct=0.0,
-                mask_coverage_pct=0.0
-            )
-            db.session.add(image_record)
-            db.session.commit()
-        except Exception as db_err:
-            db.session.rollback()
-            return jsonify({'error': f'Database logging failed: {str(db_err)}'}), 500
-        
-        # 4. Trigger the AI processing pipeline
-        image_record.status = 'processing'
+
+    if not (file and allowed_file(file.filename)):
+        return jsonify({'error': 'File type not allowed. Only JPG, JPEG, and PNG are permitted.'}), 400
+
+    # ── 2. Save file ──────────────────────────────────────────────────────────
+    filename = secure_filename(file.filename)
+    name, ext = os.path.splitext(filename)
+    unique_filename = f"{name}_{uuid.uuid4().hex[:8]}{ext}"
+    input_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+    file.save(input_path)
+
+    file_size = os.path.getsize(input_path)
+    try:
+        with Image.open(input_path) as img:
+            w, h = img.size
+            original_resolution = f"{w}x{h}"
+    except Exception:
+        original_resolution = "Unknown"
+
+    # ── 3. Create DB record (job_id = record.id) ──────────────────────────────
+    # The integer primary key becomes the durable job identifier shared between
+    # the upload response, the background thread, and the /status poll.  It
+    # survives any process restart because it lives in PostgreSQL.
+    try:
+        image_record = RestorationImage(
+            filename=unique_filename,
+            file_path=input_path,
+            status='processing',
+            original_resolution=original_resolution,
+            file_size=file_size,
+            crease_px=0,
+            scratch_px=0,
+            faces_detected=0,
+            total_damage_pct=0.0,
+            mask_coverage_pct=0.0
+        )
+        db.session.add(image_record)
         db.session.commit()
-        
-        start_time = time.time()
-        try:
-            result = process_image(input_path)
-            duration = time.time() - start_time
-            processed_path = result['processed_path']
-            processed_filename = os.path.basename(processed_path)
-            faces_detected = result['faces_detected']
-            restoration_meta = result.get('restoration_meta', {})
-            
-            # Fetch output specs
-            output_resolution = "Unknown"
-            output_file_size = None
-            try:
-                with Image.open(processed_path) as out_img:
-                    out_w, out_h = out_img.size
-                    output_resolution = f"{out_w}x{out_h}"
-                output_file_size = os.path.getsize(processed_path)
-            except Exception:
-                pass
-            
-            # Update status to restored in database
-            image_record.status = 'restored'
-            image_record.processed_filename = processed_filename
-            image_record.duration = duration
-            image_record.faces_detected = faces_detected
-            image_record.output_resolution = output_resolution
-            image_record.output_file_size = output_file_size
-            
-            if restoration_meta:
-                image_record.crease_px = restoration_meta.get('crease_px', image_record.crease_px)
-                image_record.scratch_px = restoration_meta.get('scratch_px', image_record.scratch_px)
-                image_record.total_damage_pct = restoration_meta.get('total_damage_pct', image_record.total_damage_pct)
-                image_record.mask_coverage_pct = restoration_meta.get('mask_coverage_pct', image_record.mask_coverage_pct)
-                
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            duration = time.time() - start_time
-            print(f"[API ERROR] Pipeline failed: {str(e)}")
-            import traceback
-            traceback.print_exc()
+        image_id = image_record.id           # ← this IS the job_id
+    except Exception as db_err:
+        db.session.rollback()
+        return jsonify({'error': f'Database error: {str(db_err)}'}), 500
 
-            try:
-                image_record.status = 'failed'
-                image_record.duration = duration
-                db.session.commit()
-            except Exception as db_fail_err:
-                print(f"[API ERROR] Failed to update fail status in DB: {db_fail_err}")
-                db.session.rollback()
+    print(f"[UPLOAD] Job created: image_id={image_id} file={unique_filename}")
 
-            return jsonify({'error': str(e)}), 500
-        
+    # ── 4. Launch background pipeline thread ──────────────────────────────────
+    # The thread captures image_id and input_path by value so it does not rely
+    # on any request-scoped state.
+    def _run_pipeline(flask_app, image_id, input_path):
+        """
+        Runs the complete 5-stage AI restoration pipeline in a background
+        thread.  All state is written exclusively to the database so that
+        any Gunicorn worker (not just the one that started this thread) can
+        read the result via /status/<image_id>.
+        """
+        with flask_app.app_context():
+            start_time = time.time()
+            print(f"[BG:{image_id}] Pipeline started for {os.path.basename(input_path)}")
+            try:
+                # ── Run all 5 AI stages ───────────────────────────────────────
+                result = process_image(input_path)
+                duration = time.time() - start_time
+
+                processed_path     = result['processed_path']
+                processed_filename = os.path.basename(processed_path)
+                faces_detected     = result['faces_detected']
+                restoration_meta   = result.get('restoration_meta', {})
+
+                output_resolution  = "Unknown"
+                output_file_size   = None
+                try:
+                    with Image.open(processed_path) as out_img:
+                        ow, oh = out_img.size
+                        output_resolution = f"{ow}x{oh}"
+                    output_file_size = os.path.getsize(processed_path)
+                except Exception:
+                    pass
+
+                # ── Write success to DB ───────────────────────────────────────
+                # Use a fresh query (not a cached ORM object) so we get the
+                # current row even if the SQLAlchemy session was recycled.
+                db.session.expire_all()
+                rec = db.session.get(RestorationImage, image_id)
+                if rec:
+                    rec.status             = 'restored'
+                    rec.processed_filename = processed_filename
+                    rec.duration           = duration
+                    rec.faces_detected     = faces_detected
+                    rec.output_resolution  = output_resolution
+                    rec.output_file_size   = output_file_size
+                    if restoration_meta:
+                        rec.crease_px        = restoration_meta.get('crease_px',        rec.crease_px)
+                        rec.scratch_px       = restoration_meta.get('scratch_px',       rec.scratch_px)
+                        rec.total_damage_pct = restoration_meta.get('total_damage_pct', rec.total_damage_pct)
+                        rec.mask_coverage_pct= restoration_meta.get('mask_coverage_pct',rec.mask_coverage_pct)
+                    db.session.commit()
+                    print(f"[BG:{image_id}] Done — {processed_filename} in {duration:.1f}s")
+                else:
+                    print(f"[BG:{image_id}] WARNING: DB record {image_id} not found after pipeline!")
+
+            except Exception as exc:
+                duration = time.time() - start_time
+                print(f"[BG:{image_id}] PIPELINE FAILED after {duration:.1f}s: {exc}")
+                import traceback
+                traceback.print_exc()
+                try:
+                    db.session.expire_all()
+                    rec = db.session.get(RestorationImage, image_id)
+                    if rec:
+                        rec.status   = 'failed'
+                        rec.duration = duration
+                        db.session.commit()
+                except Exception as db_err:
+                    print(f"[BG:{image_id}] DB update failed: {db_err}")
+                    db.session.rollback()
+
+    t = threading.Thread(
+        target=_run_pipeline,
+        args=(app, image_id, input_path),
+        daemon=True,
+        name=f"pipeline-{image_id}",
+    )
+    t.start()
+    print(f"[UPLOAD] Background thread started (thread={t.name})")
+
+    # ── 5. Return 202 immediately — Render proxy never times out ──────────────
+    return jsonify({'status': 'processing', 'job_id': image_id}), 202
+
+
+@app.route('/status/<int:image_id>', methods=['GET'])
+def job_status(image_id):
+    """
+    Durable polling endpoint for async restoration jobs.
+
+    Reads status exclusively from PostgreSQL so it works correctly regardless
+    of which Gunicorn worker process handles this request, and survives any
+    number of process restarts between the original upload and this poll.
+
+    Response shapes:
+        { status: 'processing' }              — pipeline still running
+        { status: 'done', result: {...} }      — pipeline finished OK
+        { status: 'error',  error: '...' }     — pipeline failed
+        404 { error: 'Not found' }             — no such image_id in DB
+    """
+    # Use expire_all so we never read a stale SQLAlchemy identity-map cache
+    db.session.expire_all()
+    rec = db.session.get(RestorationImage, image_id)
+
+    if rec is None:
+        print(f"[STATUS:{image_id}] Not found in DB")
+        return jsonify({'error': 'Not found'}), 404
+
+    print(f"[STATUS:{image_id}] status={rec.status} processed_filename={rec.processed_filename}")
+
+    if rec.status == 'restored' and rec.processed_filename:
         return jsonify({
-            'status': 'success',
-            'message': 'Image uploaded successfully!',
-            'original_image': unique_filename,
-            'processed_image': processed_filename,
-            'faces_detected': faces_detected,
-            'duration': round(duration, 2)
+            'status': 'done',
+            'result': {
+                'status':          'success',
+                'message':         'Image restored successfully!',
+                'original_image':  rec.filename,
+                'processed_image': rec.processed_filename,
+                'faces_detected':  rec.faces_detected or 0,
+                'duration':        round(rec.duration or 0.0, 2),
+            }
         }), 200
-        
-    return jsonify({'error': 'File type not allowed. Only JPG, JPEG, and PNG are permitted.'}), 400
+
+    if rec.status == 'failed':
+        return jsonify({'status': 'error', 'error': 'AI pipeline processing failed. Check server logs.'}), 200
+
+    # Detect stale 'processing' rows (background thread died without updating DB)
+    # — treat jobs stuck for >15 minutes as failed.
+    if rec.status == 'processing':
+        try:
+            upload_dt = rec.upload_time
+            if upload_dt.tzinfo is None:
+                from datetime import timezone as _tz
+                upload_dt = upload_dt.replace(tzinfo=_tz.utc)
+            elapsed = (datetime.now(timezone.utc) - upload_dt).total_seconds()
+            if elapsed > 900:   # 15 minutes
+                print(f"[STATUS:{image_id}] Stuck >15 min — marking failed")
+                rec.status = 'failed'
+                db.session.commit()
+                return jsonify({'status': 'error', 'error': 'Processing timed out. Please retry.'}), 200
+        except Exception:
+            pass
+        return jsonify({'status': 'processing'}), 200
+
+    # Any other status ('uploaded', unexpected values) → still processing
+    return jsonify({'status': 'processing'}), 200
 
 
 @app.route('/restore/<int:image_id>', methods=['POST'])
