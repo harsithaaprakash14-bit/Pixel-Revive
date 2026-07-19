@@ -74,12 +74,19 @@ def run_upscaler(input_path, output_path, scale=4, fmt="PNG"):
     ]
 
     # Run the subprocess from person3_module/ so MODEL_PATH resolves correctly
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        cwd=os.path.dirname(script_path),
-    )
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            cwd=os.path.dirname(script_path),
+            timeout=300,  # 5-minute hard limit — prevents infinite hangs on CPU
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            "Real-ESRGAN upscaler subprocess timed out after 300 seconds. "
+            "The image may be too large for CPU-only inference."
+        )
 
     # Raise a proper error so Flask can handle it — never crashes the server
     if result.returncode != 0:

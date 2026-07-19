@@ -253,7 +253,10 @@ def process_image(input_path):
             env = os.environ.copy()
             env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             command = [sys.executable, script_path, current_path, step1_output]
-            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            try:
+                result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("Damage Removal subprocess timed out after 300 seconds.")
             # Log stdout/stderr of subprocess
             if result.stdout.strip():
                 for line in result.stdout.strip().splitlines():
@@ -336,7 +339,10 @@ def process_image(input_path):
             env = os.environ.copy()
             env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             command = [sys.executable, script_path, current_path, step2_output]
-            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            try:
+                result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("Face Restoration subprocess timed out after 300 seconds.")
             # Log stdout/stderr of subprocess
             if result.stdout.strip():
                 for line in result.stdout.strip().splitlines():
@@ -403,7 +409,10 @@ def process_image(input_path):
                 env = os.environ.copy()
                 env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 command = [sys.executable, script_path, current_path, step3_output]
-                result = subprocess.run(command, env=env, capture_output=True, text=True)
+                try:
+                    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError("Colorization subprocess timed out after 300 seconds.")
                 # Log stdout/stderr of subprocess
                 if result.stdout.strip():
                     for line in result.stdout.strip().splitlines():

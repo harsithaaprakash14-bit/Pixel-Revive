@@ -242,11 +242,13 @@ def _cpu_only_inference(input_path, output_path, scale, fmt):
     allocation made here, and the inference runs on pure system RAM.
 
     Design choices:
-    - tile=0: process the entire image in one pass; no tiling is needed
-      because system RAM is the limit, not a 2 GiB GPU budget.
+    - tile=128: process the image in 128px tiles to keep peak RAM usage
+      within Render's container memory limits (~512 MB – 2 GB).  Using
+      tile=0 (whole image) on a 1024x1024 input requires several GB of
+      intermediate RRDB activations and OOM-kills the subprocess.
+    - tile_pad=10: small overlap between tiles to avoid visible seams.
     - half=False: fp16 has no hardware benefit on CPU and can degrade
       results; fp32 is used for correctness and compatibility.
-    - tile_pad=0: moot when tile=0.
     """
     import torch
 
@@ -268,8 +270,9 @@ def _cpu_only_inference(input_path, output_path, scale, fmt):
 
     print(f"\n  [..] CPU inference: {os.path.basename(input_path)}")
 
-    # Load model to CPU (CUDA not visible → load_model falls through to CPU)
-    upsampler = load_model(scale=scale, device="cpu", tile=0, tile_pad=0)
+    # Load model to CPU with tiling to prevent OOM on memory-limited containers.
+    # tile=128 keeps peak RAM well under 2 GB even for 1024x1024 inputs.
+    upsampler = load_model(scale=scale, device="cpu", tile=128, tile_pad=10)
 
     start = time.time()
     with torch.inference_mode():
