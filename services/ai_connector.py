@@ -211,6 +211,59 @@ def unload_all_models():
     _cleanup_gpu_memory()
 
 
+def _run_subprocess_with_logging(command, env, stage_name):
+    import time
+    import subprocess
+    import sys
+    
+    print(f"[SUBPROCESS] Starting {stage_name}...")
+    print(f"[SUBPROCESS] Command: {' '.join(command)}")
+    sys.stdout.flush()
+    
+    start_time = time.time()
+    try:
+        result = subprocess.run(
+            command,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        duration = time.time() - start_time
+        print(f"[SUBPROCESS] {stage_name} finished in {duration:.2f}s with code {result.returncode}")
+        sys.stdout.flush()
+        
+        # Log stdout/stderr
+        if result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                print(f"  [{stage_name}] {line}")
+        if result.stderr.strip():
+            for line in result.stderr.strip().splitlines():
+                print(f"  [{stage_name} STDERR] {line}", file=sys.stderr)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"{stage_name} subprocess failed (code {result.returncode}):\n"
+                f"STDOUT: {result.stdout}\n"
+                f"STDERR: {result.stderr}"
+            )
+        return result
+        
+    except subprocess.TimeoutExpired as e:
+        duration = time.time() - start_time
+        print(f"[SUBPROCESS] {stage_name} TIMED OUT after {duration:.2f}s")
+        sys.stdout.flush()
+        raise RuntimeError(f"{stage_name} subprocess timed out after 300 seconds.") from e
+        
+    except Exception as e:
+        duration = time.time() - start_time
+        print(f"[SUBPROCESS] {stage_name} FAILED or crashed after {duration:.2f}s: {e}")
+        sys.stdout.flush()
+        raise e
+
+
 def process_image(input_path):
     import os
     import gc
@@ -219,6 +272,9 @@ def process_image(input_path):
 
     sys_ram = _get_system_available_ram()
     free_vram = _get_device_free_vram()
+
+    # Check GPU availability
+    gpu_available = _TORCH_AVAILABLE and _torch.cuda.is_available()
 
     # Raise Host RAM threshold to 2500 MB for proactive low memory mode
     proactive_low_mem = False
@@ -246,26 +302,20 @@ def process_image(input_path):
     
     def run_stage_1(low_mem):
         nonlocal restoration_meta
-        if low_mem:
+        # Run in subprocess ONLY if low memory mode is enabled AND GPU is available.
+        # On CPU-only servers (like Render's production instances), spawning python
+        # subprocesses triggers duplicate memory allocations which results in OOM worker kills.
+        use_sub = low_mem and gpu_available
+        if use_sub:
             unload_all_models()
             _log_mem("Damage Removal (Subprocess)", "Before")
             script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "damage_remover.py")
             env = os.environ.copy()
             env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             command = [sys.executable, script_path, current_path, step1_output]
-            try:
-                result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("Damage Removal subprocess timed out after 300 seconds.")
-            # Log stdout/stderr of subprocess
-            if result.stdout.strip():
-                for line in result.stdout.strip().splitlines():
-                    print(f"  [Damage Removal Subprocess] {line}")
-            if result.stderr.strip():
-                for line in result.stderr.strip().splitlines():
-                    print(f"  [Damage Removal Subprocess STDERR] {line}", file=sys.stderr)
-            if result.returncode != 0:
-                raise RuntimeError(f"Damage Removal subprocess failed (code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+            
+            result = _run_subprocess_with_logging(command, env, "Damage Removal")
+            
             # Parse meta stats from subprocess stdout
             _restoration_meta = {}
             for line in result.stdout.splitlines():
@@ -332,26 +382,17 @@ def process_image(input_path):
 
     def run_stage_2(low_mem):
         nonlocal faces_detected_count
-        if low_mem:
+        # Run in subprocess only if low memory mode is enabled and GPU is available.
+        use_sub = low_mem and gpu_available
+        if use_sub:
             unload_all_models()
             _log_mem("Face Restoration (Subprocess)", "Before")
             script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_restorer.py")
             env = os.environ.copy()
             env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             command = [sys.executable, script_path, current_path, step2_output]
-            try:
-                result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("Face Restoration subprocess timed out after 300 seconds.")
-            # Log stdout/stderr of subprocess
-            if result.stdout.strip():
-                for line in result.stdout.strip().splitlines():
-                    print(f"  [Face Restoration Subprocess] {line}")
-            if result.stderr.strip():
-                for line in result.stderr.strip().splitlines():
-                    print(f"  [Face Restoration Subprocess STDERR] {line}", file=sys.stderr)
-            if result.returncode != 0:
-                raise RuntimeError(f"Face Restoration subprocess failed (code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+            
+            result = _run_subprocess_with_logging(command, env, "Face Restoration")
 
             # Parse faces detected count from stdout
             faces_detected_count = 0
@@ -402,26 +443,18 @@ def process_image(input_path):
         shutil.copy(current_path, step3_output)
     else:
         def run_stage_3(low_mem):
-            if low_mem:
+            # Run in subprocess only if low memory mode is enabled and GPU is available.
+            use_sub = low_mem and gpu_available
+            if use_sub:
                 unload_all_models()
                 _log_mem("Colorization (Subprocess)", "Before")
                 script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "colorizer.py")
                 env = os.environ.copy()
                 env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 command = [sys.executable, script_path, current_path, step3_output]
-                try:
-                    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
-                except subprocess.TimeoutExpired:
-                    raise RuntimeError("Colorization subprocess timed out after 300 seconds.")
-                # Log stdout/stderr of subprocess
-                if result.stdout.strip():
-                    for line in result.stdout.strip().splitlines():
-                        print(f"  [Colorization Subprocess] {line}")
-                if result.stderr.strip():
-                    for line in result.stderr.strip().splitlines():
-                        print(f"  [Colorization Subprocess STDERR] {line}", file=sys.stderr)
-                if result.returncode != 0:
-                    raise RuntimeError(f"Colorization subprocess failed (code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+                
+                _run_subprocess_with_logging(command, env, "Colorization")
+                
                 _log_mem("Colorization (Subprocess)", "After")
             else:
                 _log_mem("Colorization", "Before")
