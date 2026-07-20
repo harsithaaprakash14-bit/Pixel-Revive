@@ -26,7 +26,7 @@ def test_admin():
     print("[OK] Admin page works!")
 
 def test_upload_and_pipeline():
-    print("Testing POST /upload with sample_photo.png ...")
+    print("Testing POST /upload with sample_photo.png (async)...")
     file_path = "sample_photo.png"
     if not os.path.exists(file_path):
         print(f"[ERROR] Test image {file_path} not found!")
@@ -36,17 +36,32 @@ def test_upload_and_pipeline():
         files = {'image': (file_path, f, 'image/png')}
         r = requests.post(f"{BASE_URL}/upload", files=files)
         
-    assert r.status_code == 200, f"Upload API failed with {r.status_code}: {r.text}"
+    assert r.status_code == 202, f"Upload API failed with {r.status_code}: {r.text}"
     data = r.json()
-    assert data['status'] == 'success', f"API returned unsuccessful status: {data}"
+    assert data['status'] == 'processing', f"Expected status 'processing', got {data}"
+    job_id = data['job_id']
+    print(f"[OK] Upload success! job_id: {job_id}")
     
-    print(f"[OK] Upload success!")
-    print(f"     Original image: {data['original_image']}")
-    print(f"     Processed image: {data['processed_image']}")
-    print(f"     Faces detected: {data['faces_detected']}")
-    print(f"     Duration: {data['duration']}s")
-    
-    return data['original_image'], data['processed_image']
+    # Poll status
+    print("Polling status...")
+    import time
+    start = time.time()
+    while True:
+        if time.time() - start > 300:
+            raise AssertionError("Pipeline timeout (took >300s)")
+        poll_resp = requests.get(f"{BASE_URL}/status/{job_id}").json()
+        status = poll_resp.get("status")
+        if status == "done":
+            res = poll_resp["result"]
+            print(f"[OK] Pipeline complete!")
+            print(f"     Original image: {res['original_image']}")
+            print(f"     Processed image: {res['processed_image']}")
+            print(f"     Faces detected: {res['faces_detected']}")
+            print(f"     Duration: {res['duration']}s")
+            return res['original_image'], res['processed_image']
+        elif status == "error":
+            raise AssertionError(f"Pipeline processing failed: {poll_resp.get('error')}")
+        time.sleep(2)
 
 def test_download(filename):
     print(f"Testing GET /download/{filename} ...")
