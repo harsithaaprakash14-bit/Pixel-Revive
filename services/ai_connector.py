@@ -371,6 +371,8 @@ def process_image(input_path):
             from services.damage_remover import restore_image
             _, _meta = restore_image(current_path, step1_output)
             restoration_meta = _meta
+            if low_mem:
+                unload_all_models()
             _log_mem("Damage Removal", "After")
 
     try:
@@ -428,6 +430,8 @@ def process_image(input_path):
             _log_mem("Face Restoration", "Before")
             from services.face_restorer import restore_faces
             faces_detected_count = restore_faces(current_path, step2_output)
+            if low_mem:
+                unload_all_models()
             _log_mem("Face Restoration", "After")
 
     try:
@@ -483,6 +487,8 @@ def process_image(input_path):
                 from services.colorizer import load_colorizer, colorize_image
                 c = _get_colorizer()
                 colorize_image(c, current_path, step3_output)
+                if low_mem:
+                    unload_all_models()
                 _log_mem("Colorization", "After")
 
         try:
