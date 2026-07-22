@@ -96,7 +96,6 @@ def upload_file():
             file_size=file_size,
             crease_px=0,
             scratch_px=0,
-            faces_detected=0,
             total_damage_pct=0.0,
             mask_coverage_pct=0.0
         )
@@ -107,7 +106,7 @@ def upload_file():
         db.session.rollback()
         return jsonify({'error': f'Database error: {str(db_err)}'}), 500
 
-    print(f"[UPLOAD] Job created: image_id={image_id} file={unique_filename}")
+    print(f"[UPLOAD RECEIVED] file={unique_filename} image_id={image_id}")
 
     # ── 4. Launch background pipeline thread ──────────────────────────────────
     # The thread captures image_id and input_path by value so it does not rely
@@ -121,7 +120,7 @@ def upload_file():
         """
         with flask_app.app_context():
             start_time = time.time()
-            print(f"[BG:{image_id}] Pipeline started for {os.path.basename(input_path)}")
+            print(f"[BG:{image_id}] [BG WORKER STARTED] Pipeline started for {os.path.basename(input_path)}")
             try:
                 # ── Run all 5 AI stages ───────────────────────────────────────
                 result = process_image(input_path)
@@ -142,6 +141,8 @@ def upload_file():
                 except Exception:
                     pass
 
+                print(f"[OUTPUT FILE CREATED] image_id={image_id} path={processed_path} exists={os.path.exists(processed_path)} size={output_file_size}")
+
                 # ── Write success to DB ───────────────────────────────────────
                 # Use a fresh query (not a cached ORM object) so we get the
                 # current row even if the SQLAlchemy session was recycled.
@@ -159,7 +160,28 @@ def upload_file():
                         rec.scratch_px       = restoration_meta.get('scratch_px',       rec.scratch_px)
                         rec.total_damage_pct = restoration_meta.get('total_damage_pct', rec.total_damage_pct)
                         rec.mask_coverage_pct= restoration_meta.get('mask_coverage_pct',rec.mask_coverage_pct)
-                    db.session.commit()
+                    try:
+                        db.session.commit()
+                        print(f"[DB STATUS UPDATED] image_id={image_id} status={rec.status}")
+                    except Exception as commit_err:
+                        print(f"[BG:{image_id}] Success DB commit failed ({commit_err}), retrying after session rollback/recycle...")
+                        db.session.rollback()
+                        db.session.expire_all()
+                        rec = db.session.get(RestorationImage, image_id)
+                        if rec:
+                            rec.status             = 'restored'
+                            rec.processed_filename = processed_filename
+                            rec.duration           = duration
+                            rec.faces_detected     = faces_detected
+                            rec.output_resolution  = output_resolution
+                            rec.output_file_size   = output_file_size
+                            if restoration_meta:
+                                rec.crease_px        = restoration_meta.get('crease_px',        rec.crease_px)
+                                rec.scratch_px       = restoration_meta.get('scratch_px',       rec.scratch_px)
+                                rec.total_damage_pct = restoration_meta.get('total_damage_pct', rec.total_damage_pct)
+                                rec.mask_coverage_pct= restoration_meta.get('mask_coverage_pct',rec.mask_coverage_pct)
+                            db.session.commit()
+                            print(f"[DB STATUS UPDATED] image_id={image_id} status={rec.status} (after retry)")
                     print(f"[BG:{image_id}] Done — {processed_filename} in {duration:.1f}s")
                 else:
                     print(f"[BG:{image_id}] WARNING: DB record {image_id} not found after pipeline!")
@@ -179,6 +201,15 @@ def upload_file():
                 except Exception as db_err:
                     print(f"[BG:{image_id}] DB update failed: {db_err}")
                     db.session.rollback()
+                    try:
+                        db.session.remove()
+                        rec = db.session.get(RestorationImage, image_id)
+                        if rec:
+                            rec.status   = 'failed'
+                            rec.duration = duration
+                            db.session.commit()
+                    except Exception as retry_err:
+                        print(f"[BG:{image_id}] DB fail status update retry failed: {retry_err}")
 
     t = threading.Thread(
         target=_run_pipeline,
@@ -235,16 +266,18 @@ def job_status(image_id):
         return jsonify({'status': 'error', 'error': 'AI pipeline processing failed. Check server logs.'}), 200
 
     # Detect stale 'processing' rows (background thread died without updating DB)
-    # — treat jobs stuck for >15 minutes as failed.
+    # — treat jobs stuck for >10 minutes as failed.
     if rec.status == 'processing':
         try:
             upload_dt = rec.upload_time
+            if upload_dt is None:
+                raise ValueError("upload_time is NULL")
             if upload_dt.tzinfo is None:
                 from datetime import timezone as _tz
                 upload_dt = upload_dt.replace(tzinfo=_tz.utc)
             elapsed = (datetime.now(timezone.utc) - upload_dt).total_seconds()
-            if elapsed > 900:   # 15 minutes
-                print(f"[STATUS:{image_id}] Stuck >15 min — marking failed")
+            if elapsed > 600:   # 10 minutes timeout
+                print(f"[STATUS:{image_id}] Stuck >10 min — marking failed")
                 rec.status = 'failed'
                 db.session.commit()
                 return jsonify({'status': 'error', 'error': 'Processing timed out. Please retry.'}), 200

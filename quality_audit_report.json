@@ -1,0 +1,317 @@
+[
+  {
+    "file": "01_clean_color.jpg",
+    "description": "Clean color photo",
+    "metrics": {
+      "original_size": "600x400",
+      "restored_size": "2400x1600",
+      "upscale_factor": 16.0,
+      "psnr_vs_upscaled": 29.06,
+      "ssim_vs_upscaled": 0.9884,
+      "sharpness_original": 73.7,
+      "sharpness_restored": 281.3,
+      "sharpness_gain": 280.6,
+      "noise_original": 2.04,
+      "noise_restored": 4.05,
+      "colorfulness_orig": 133.5,
+      "colorfulness_rest": 131.2,
+      "scratch_lines_orig": 0,
+      "scratch_lines_rest": 0,
+      "contrast_orig": 26.1,
+      "contrast_rest": 27.2,
+      "edge_quality_orig": 4.44,
+      "edge_quality_rest": 4.4,
+      "checkerboard_index": 0.1912,
+      "faces_detected": 0,
+      "duration_s": 20.6,
+      "issues": [
+        "Noise INCREASED after restoration",
+        "4x upscale confirmed (16.0x area increase)"
+      ],
+      "scores": {
+        "damage_removal": 100,
+        "face_restoration": 75,
+        "colorization": 85,
+        "upscaling": 100,
+        "final_enhancement": 64,
+        "overall": 86
+      }
+    }
+  },
+  {
+    "file": "02_grayscale_portrait.jpg",
+    "description": "Grayscale portrait",
+    "metrics": {
+      "original_size": "400x400",
+      "restored_size": "1600x1600",
+      "upscale_factor": 16.0,
+      "psnr_vs_upscaled": 14.56,
+      "ssim_vs_upscaled": 0.7674,
+      "sharpness_original": 459.0,
+      "sharpness_restored": 218.7,
+      "sharpness_gain": 215.3,
+      "noise_original": 5.11,
+      "noise_restored": 3.62,
+      "colorfulness_orig": 0.0,
+      "colorfulness_rest": 68.7,
+      "scratch_lines_orig": 0,
+      "scratch_lines_rest": 0,
+      "contrast_orig": 62.6,
+      "contrast_rest": 57.3,
+      "edge_quality_orig": 3.22,
+      "edge_quality_rest": 3.02,
+      "checkerboard_index": 0.1038,
+      "faces_detected": 0,
+      "duration_s": 36.53,
+      "issues": [
+        "4x upscale confirmed (16.0x area increase)"
+      ],
+      "scores": {
+        "damage_removal": 100,
+        "face_restoration": 75,
+        "colorization": 85,
+        "upscaling": 73,
+        "final_enhancement": 52,
+        "overall": 76
+      }
+    }
+  },
+  {
+    "file": "03_bw_scratched.jpg",
+    "description": "BW with heavy white + dark scratches",
+    "metrics": {
+      "original_size": "700x500",
+      "restored_size": "2800x2000",
+      "upscale_factor": 16.0,
+      "psnr_vs_upscaled": 19.21,
+      "ssim_vs_upscaled": 0.8192,
+      "sharpness_original": 4882.2,
+      "sharpness_restored": 300.6,
+      "sharpness_gain": 266.3,
+      "noise_original": 14.31,
+      "noise_restored": 4.67,
+      "colorfulness_orig": 0.0,
+      "colorfulness_rest": 22.9,
+      "scratch_lines_orig": 33,
+      "scratch_lines_rest": 208,
+      "contrast_orig": 25.2,
+      "contrast_rest": 24.1,
+      "edge_quality_orig": 19.85,
+      "edge_quality_rest": 14.12,
+      "checkerboard_index": 0.1192,
+      "faces_detected": 0,
+      "duration_s": 38.5,
+      "issues": [
+        "208 scratch-like lines remain in output",
+        "4x upscale confirmed (16.0x area increase)"
+      ],
+      "scores": {
+        "damage_removal": 0,
+        "face_restoration": 75,
+        "colorization": 85,
+        "upscaling": 52,
+        "final_enhancement": 48,
+        "overall": 45
+      }
+    }
+  },
+  {
+    "file": "04_sepia_faded.jpg",
+    "description": "Sepia/faded old photo",
+    "metrics": {
+      "original_size": "600x450",
+      "restored_size": "2400x1800",
+      "upscale_factor": 16.0,
+      "psnr_vs_upscaled": 20.66,
+      "ssim_vs_upscaled": 0.6602,
+      "sharpness_original": 4.3,
+      "sharpness_restored": 153.4,
+      "sharpness_gain": 153.3,
+      "noise_original": 0.8,
+      "noise_restored": 2.78,
+      "colorfulness_orig": 12.0,
+      "colorfulness_rest": 51.9,
+      "scratch_lines_orig": 0,
+      "scratch_lines_rest": 0,
+      "contrast_orig": 20.1,
+      "contrast_rest": 24.0,
+      "edge_quality_orig": 3.83,
+      "edge_quality_rest": 3.93,
+      "checkerboard_index": 0.1776,
+      "faces_detected": 0,
+      "duration_s": 21.99,
+      "issues": [
+        "Noise INCREASED after restoration",
+        "4x upscale confirmed (16.0x area increase)"
+      ],
+      "scores": {
+        "damage_removal": 100,
+        "face_restoration": 75,
+        "colorization": 85,
+        "upscaling": 100,
+        "final_enhancement": 77,
+        "overall": 89
+      }
+    }
+  },
+  {
+    "file": "05_color_landscape.jpg",
+    "description": "Color landscape with stains",
+    "metrics": {
+      "original_size": "800x450",
+      "restored_size": "3200x1800",
+      "upscale_factor": 16.0,
+      "psnr_vs_upscaled": 28.04,
+      "ssim_vs_upscaled": 0.9493,
+      "sharpness_original": 37.0,
+      "sharpness_restored": 367.4,
+      "sharpness_gain": 367.0,
+      "noise_original": 1.49,
+      "noise_restored": 4.74,
+      "colorfulness_orig": 92.5,
+      "colorfulness_rest": 92.0,
+      "scratch_lines_orig": 0,
+      "scratch_lines_rest": 0,
+      "contrast_orig": 37.7,
+      "contrast_rest": 34.2,
+      "edge_quality_orig": 3.82,
+      "edge_quality_rest": 6.68,
+      "checkerboard_index": 0.2837,
+      "faces_detected": 0,
+      "duration_s": 12.9,
+      "issues": [
+        "Noise INCREASED after restoration",
+        "4x upscale confirmed (16.0x area increase)",
+        "Edge detail improved by 75%"
+      ],
+      "scores": {
+        "damage_removal": 100,
+        "face_restoration": 75,
+        "colorization": 85,
+        "upscaling": 100,
+        "final_enhancement": 76,
+        "overall": 89
+      }
+    }
+  },
+  {
+    "file": "06_tiny_image.jpg",
+    "description": "Tiny 100x100 input",
+    "metrics": {
+      "original_size": "100x100",
+      "restored_size": "400x400",
+      "upscale_factor": 16.0,
+      "psnr_vs_upscaled": 22.86,
+      "ssim_vs_upscaled": 0.1689,
+      "sharpness_original": 7920.9,
+      "sharpness_restored": 208.7,
+      "sharpness_gain": 155.0,
+      "noise_original": 17.51,
+      "noise_restored": 3.03,
+      "colorfulness_orig": 17.8,
+      "colorfulness_rest": 2.6,
+      "scratch_lines_orig": 0,
+      "scratch_lines_rest": 0,
+      "contrast_orig": 19.6,
+      "contrast_rest": 3.6,
+      "edge_quality_orig": 80.92,
+      "edge_quality_rest": 0.0,
+      "checkerboard_index": 0.3332,
+      "faces_detected": 0,
+      "duration_s": 5.79,
+      "issues": [
+        "Color was LOST during restoration",
+        "Contrast DEGRADED significantly",
+        "4x upscale confirmed (16.0x area increase)"
+      ],
+      "scores": {
+        "damage_removal": 100,
+        "face_restoration": 75,
+        "colorization": 85,
+        "upscaling": 44,
+        "final_enhancement": 0,
+        "overall": 56
+      }
+    }
+  },
+  {
+    "file": "07_color_portrait.jpg",
+    "description": "Synthetic color portrait",
+    "metrics": {
+      "original_size": "500x600",
+      "restored_size": "2000x2400",
+      "upscale_factor": 16.0,
+      "psnr_vs_upscaled": 31.16,
+      "ssim_vs_upscaled": 0.992,
+      "sharpness_original": 261.6,
+      "sharpness_restored": 76.1,
+      "sharpness_gain": 74.1,
+      "noise_original": 4.14,
+      "noise_restored": 2.37,
+      "colorfulness_orig": 26.7,
+      "colorfulness_rest": 27.1,
+      "scratch_lines_orig": 0,
+      "scratch_lines_rest": 0,
+      "contrast_orig": 50.1,
+      "contrast_rest": 48.9,
+      "edge_quality_orig": 2.68,
+      "edge_quality_rest": 3.67,
+      "checkerboard_index": 0.0854,
+      "faces_detected": 0,
+      "duration_s": 8.0,
+      "issues": [
+        "4x upscale confirmed (16.0x area increase)",
+        "Edge detail improved by 37%"
+      ],
+      "scores": {
+        "damage_removal": 100,
+        "face_restoration": 75,
+        "colorization": 85,
+        "upscaling": 64,
+        "final_enhancement": 70,
+        "overall": 78
+      }
+    }
+  },
+  {
+    "file": "08_bw_creased.jpg",
+    "description": "BW with fold/crease lines",
+    "metrics": {
+      "original_size": "600x500",
+      "restored_size": "2400x2000",
+      "upscale_factor": 16.0,
+      "psnr_vs_upscaled": 20.31,
+      "ssim_vs_upscaled": 0.5167,
+      "sharpness_original": 238.1,
+      "sharpness_restored": 446.6,
+      "sharpness_gain": 444.3,
+      "noise_original": 4.75,
+      "noise_restored": 6.77,
+      "colorfulness_orig": 0.0,
+      "colorfulness_rest": 30.9,
+      "scratch_lines_orig": 0,
+      "scratch_lines_rest": 162,
+      "contrast_orig": 9.4,
+      "contrast_rest": 17.5,
+      "edge_quality_orig": 11.2,
+      "edge_quality_rest": 33.84,
+      "checkerboard_index": 0.219,
+      "faces_detected": 0,
+      "duration_s": 19.22,
+      "issues": [
+        "162 scratch-like lines remain in output",
+        "OVER-contrasted output",
+        "4x upscale confirmed (16.0x area increase)",
+        "Edge detail improved by 202%"
+      ],
+      "scores": {
+        "damage_removal": 0,
+        "face_restoration": 75,
+        "colorization": 85,
+        "upscaling": 100,
+        "final_enhancement": 100,
+        "overall": 70
+      }
+    }
+  }
+]

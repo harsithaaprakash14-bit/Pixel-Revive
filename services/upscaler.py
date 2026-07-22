@@ -14,16 +14,32 @@ Entry point for the AI pipeline:
     output_path = run_upscaler(input_path, output_path, scale=4)
 """
 
+import sys
 import os
 import subprocess
 
-# Path to the isolated conda environment Python interpreter
-_local_conda_path = "/home/ubuntu/miniconda3/envs/pixelrevive_upscaler/bin/python"
-if os.path.exists(_local_conda_path):
-    UPSCALER_PYTHON = _local_conda_path
-else:
-    import sys
-    UPSCALER_PYTHON = sys.executable
+def _get_upscaler_python():
+    if "UPSCALER_PYTHON" in os.environ and os.path.exists(os.environ["UPSCALER_PYTHON"]):
+        return os.environ["UPSCALER_PYTHON"]
+    
+    linux_conda = "/home/ubuntu/miniconda3/envs/pixelrevive_upscaler/bin/python"
+    if os.path.exists(linux_conda):
+        return linux_conda
+        
+    if sys.platform == "win32":
+        possible_win_paths = [
+            os.path.expanduser(r"~\miniconda3\envs\pixelrevive_upscaler\python.exe"),
+            os.path.expanduser(r"~\Anaconda3\envs\pixelrevive_upscaler\python.exe"),
+            r"C:\ProgramData\miniconda3\envs\pixelrevive_upscaler\python.exe",
+            r"C:\ProgramData\Anaconda3\envs\pixelrevive_upscaler\python.exe",
+        ]
+        for path in possible_win_paths:
+            if os.path.exists(path):
+                return path
+
+    return sys.executable
+
+UPSCALER_PYTHON = _get_upscaler_python()
 
 # Path to Person 3's upscaler script (with MODEL_PATH and sys.exit already fixed)
 UPSCALER_SCRIPT = os.path.join(

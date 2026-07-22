@@ -514,18 +514,19 @@ def _detect_scratches_and_stains(gray_img):
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(scratch_thresh)
     clean_scratch = np.zeros_like(scratch_thresh)
     for i in range(1, num_labels):
-        if stats[i, cv2.CC_STAT_AREA] >= 25:
+        bw   = stats[i, cv2.CC_STAT_WIDTH]
+        bh   = stats[i, cv2.CC_STAT_HEIGHT]
+        area = stats[i, cv2.CC_STAT_AREA]
+        diag = np.sqrt(bw ** 2 + bh ** 2)
+        thickness = area / max(1.0, diag)
+        
+        # Scratches must be thin (thickness < 5.0) to filter out thick object boundary changes
+        if area >= 25 and thickness < 5.0:
             clean_scratch[labels == i] = 255
     scratch_thresh = clean_scratch
 
-    # Stain detection — large uniform discoloured regions.
-    # Threshold raised 55→70: natural shading gradients no longer trigger.
-    blur_stain = cv2.GaussianBlur(gray_img, (31, 31), 0)
-    diff_stain = cv2.absdiff(gray_img, blur_stain)
-    _, stain_thresh = cv2.threshold(diff_stain, 70, 255, cv2.THRESH_BINARY)
-    stain_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    stain_thresh = cv2.morphologyEx(stain_thresh, cv2.MORPH_CLOSE, stain_kernel)
-    stain_thresh = cv2.bitwise_and(stain_thresh, cv2.bitwise_not(texture_suppress))
+    # Stain detection — disabled to prevent false positive blobs on step edges
+    stain_thresh = np.zeros_like(scratch_thresh)
 
     # ── Bright hairline scratch layer ──────────────────────────────────────────
     # Catches fine, bright surface marks the difference method misses.
@@ -608,14 +609,19 @@ def _detect_bright_crack_network(gray_img):
         bh   = stats[i, cv2.CC_STAT_HEIGHT]
         area = stats[i, cv2.CC_STAT_AREA]
         diag = np.sqrt(bw ** 2 + bh ** 2)
-        # Aspect ratio check: minimum raised 1.5→2.0 — cracks must be more
-        # elongated to be accepted; reduces blob false positives.
-        aspect = max(bw, bh) / max(1, min(bw, bh))
-        # Fill-ratio check: cracks have low fill (thin line in bounding box)
-        fill_ratio = area / max(1, bw * bh)
-        # Accept if elongated OR if it is a small spot in a large crack context
-        if (aspect >= 2.0 and fill_ratio < 0.65) or (diag > min(h, w) * 0.05 and fill_ratio < 0.45):
-            crack_bin[labels == i] = 255
+        
+        # Estimate thickness (area / diagonal). Real hairline cracks must be thin (thickness < 6.5px).
+        # This excludes large organic shapes like flower petals or skin patches from being flagged.
+        thickness = area / max(1.0, diag)
+        if thickness < 6.5:
+            # Aspect ratio check: minimum raised 1.5→2.0 — cracks must be more
+            # elongated to be accepted; reduces blob false positives.
+            aspect = max(bw, bh) / max(1, min(bw, bh))
+            # Fill-ratio check: cracks have low fill (thin line in bounding box)
+            fill_ratio = area / max(1, bw * bh)
+            # Accept if elongated OR if it is a small spot in a large crack context
+            if (aspect >= 2.0 and fill_ratio < 0.65) or (diag > min(h, w) * 0.05 and fill_ratio < 0.45):
+                crack_bin[labels == i] = 255
 
     # ── 4. Morphological skeleton — thin cracks to single-pixel paths ──────────
     # Use repeated erosion + hit-or-miss to approximate Zhang-Suen thinning
@@ -721,6 +727,7 @@ def generate_damage_mask(img_bgr: np.ndarray):
     # ── Combine all detections ────────────────────────────────────────────────
     combined = cv2.bitwise_or(crease_mask, scratch_mask)
     combined = cv2.bitwise_or(combined, crack_network_mask)
+    
     total_damage_pct = round(float(np.sum(combined > 0) / combined.size) * 100, 2)
     print(f"  [Mask] Total damage: {total_damage_pct}%")
 
@@ -866,7 +873,21 @@ def restore_image(input_path: str, output_path: str):
 
     result_full = result_pil.resize((original_w, original_h), Image.LANCZOS)
 
-    result_full.save(output_path)
+    # ── High-Resolution Composite Step ───────────────────────────────────────
+    # Convert LaMa output back to BGR
+    inpainted_bgr = cv2.cvtColor(np.array(result_full), cv2.COLOR_RGB2BGR)
+
+    # Dilate slightly and feather full-res damage mask for seamless alpha blending
+    dilated_mask = cv2.dilate(mask_np, np.ones((5, 5), np.uint8), iterations=1)
+    mask_full = cv2.GaussianBlur(dilated_mask.astype(np.float32), (9, 9), 0) / 255.0
+    mask_full = np.clip(mask_full, 0.0, 1.0)[:, :, np.newaxis]
+
+    # Paste inpainted pixels only on masked regions; preserve 100% of pristine original pixels elsewhere
+    final_bgr = (inpainted_bgr.astype(np.float32) * mask_full + 
+                 img_bgr.astype(np.float32) * (1.0 - mask_full))
+    final_bgr = np.clip(final_bgr, 0, 255).astype(np.uint8)
+
+    cv2.imwrite(output_path, final_bgr)
     size_kb = os.path.getsize(output_path) / 1024
     print(f"[LaMa] Restored image saved -> {output_path}  ({size_kb:.1f} KB)")
     return output_path, meta

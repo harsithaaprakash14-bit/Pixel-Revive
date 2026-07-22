@@ -143,31 +143,29 @@ def enhance_final_output(input_path: str, output_path: str) -> str:
     # Keep a pristine copy for the final halo-guard blend
     original_copy = img.copy()
 
-    # Step 1: Unsharp mask (amount 0.10 — gentle; ESRGAN already sharp)
+    # Step 1: Unsharp mask (amount 0.25 — crisp detail recovery)
     print("  [Enhancer] Step 1: Unsharp mask sharpening...")
-    img = _unsharp_mask(img, radius=1.2, amount=0.10)
+    img = _unsharp_mask(img, radius=1.2, amount=0.25)
 
-    # Step 2: CLAHE local contrast (LAB L-channel, clipLimit 1.2 — subtle)
+    # Step 2: CLAHE local contrast (LAB L-channel, clipLimit 1.8 — adaptive contrast)
     print("  [Enhancer] Step 2: CLAHE local contrast (LAB)...")
-    img = _clahe_lab(img, clip_limit=1.2, tile_size=8)
+    img = _clahe_lab(img, clip_limit=1.8, tile_size=8)
 
-    # Step 3: High-frequency texture blend (strength 0.10 — gentle recovery)
+    # Step 3: High-frequency texture blend (strength 0.18 — texture preservation)
     print("  [Enhancer] Step 3: Texture preservation blend...")
-    img = _hf_texture_blend(original_copy, img, strength=0.10)
+    img = _hf_texture_blend(original_copy, img, strength=0.18)
 
-    # Step 4: Adaptive detail sharpening (strength 0.08 — subtle crispness)
+    # Step 4: Adaptive detail sharpening (strength 0.18 — selective crispness)
     print("  [Enhancer] Step 4: Adaptive detail sharpening...")
-    img = _adaptive_sharpen(img, strength=0.08)
+    img = _adaptive_sharpen(img, strength=0.18)
 
-    # Step 5: Edge reinforcement (strength 0.04 — very mild)
+    # Step 5: Edge reinforcement (strength 0.08 — structural definition)
     print("  [Enhancer] Step 5: Edge reinforcement...")
-    img = _edge_reinforce(img, strength=0.04)
+    img = _edge_reinforce(img, strength=0.08)
 
-    # Step 6: Halo-guard blend — cap total sharpening intensity.
-    # Blend ratio adjusted 0.70/0.30 -> 0.50/0.50: with 50% original upscaled blended
-    # back in, any residual over-sharpening or colour shift is completely damped.
+    # Step 6: Halo-guard blend — 85% enhanced / 15% original upscaled
     print("  [Enhancer] Step 6: Halo-guard blend...")
-    img = cv2.addWeighted(img, 0.50, original_copy, 0.50, 0).astype(np.uint8)
+    img = cv2.addWeighted(img, 0.85, original_copy, 0.15, 0).astype(np.uint8)
 
     # Save
     ok = cv2.imwrite(output_path, img)

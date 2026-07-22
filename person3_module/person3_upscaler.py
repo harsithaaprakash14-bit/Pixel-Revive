@@ -97,12 +97,8 @@ DEFAULT_SCALE = 4
 # overhead (~300 MB) + model weights (~64 MB) are counted.  Starting at 64
 # avoids wasting time on sizes that are guaranteed to fail in this environment.
 # After all GPU tiles are exhausted the script spawns a CPU-only subprocess.
-GPU_TILE_SIZES = [64, 32, 16]
-
-# MODIFICATION 2 (cont.): TILE_PAD=0 maximises the memory available per tile.
-# Non-zero padding prevents seam artefacts but requires extra allocation;
-# for an environment with a hard 2 GiB cap, saving those bytes matters more.
-TILE_PAD = 0
+GPU_TILE_SIZES = [256, 128, 64]
+TILE_PAD = 10
 
 
 # ─── Model download ───────────────────────────────────────────────────────────

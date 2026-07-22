@@ -59,28 +59,29 @@ import cv2
 import torch
 from ddcolor import DDColor, ColorizationPipeline, build_ddcolor_model
 from huggingface_hub import hf_hub_download
-
-
-MODEL_PATH = hf_hub_download(repo_id="piddnad/DDColor-models", filename="ddcolor_paper.pth")
-
 # MODIFICATION 2: reduced from 512 → 256.
 # Activation VRAM ∝ input_size², so 256px needs only ¼ of what 512px needed.
 # Quality impact is negligible: the prediction is only for colour channels
 # (ab in Lab space) which are low-frequency and tolerate lower resolution;
 # full-resolution luminance is always preserved from the original image.
-COLORIZER_INPUT_SIZE = 256
+COLORIZER_INPUT_SIZE = 512
 
+_model_path = None
 
 def load_colorizer():
     """
     Build and cache the DDColor ColorizationPipeline.
     Called once at Flask startup and reused for every subsequent request.
     """
+    global _model_path
+    if _model_path is None:
+        _model_path = hf_hub_download(repo_id="piddnad/DDColor-models", filename="ddcolor_paper.pth")
+        
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_ddcolor_model(
         DDColor,
-        model_path=MODEL_PATH,
-        input_size=COLORIZER_INPUT_SIZE,   # MODIFICATION 2
+        model_path=_model_path,
+        input_size=COLORIZER_INPUT_SIZE,
         model_size="large",
         decoder_type="MultiScaleColorDecoder",
         device=device,
@@ -89,27 +90,34 @@ def load_colorizer():
           f"(input_size={COLORIZER_INPUT_SIZE})")
     return ColorizationPipeline(model, input_size=COLORIZER_INPUT_SIZE)
 
-def is_grayscale_image(img, threshold=15, percentage=5.0):
+def is_grayscale_image(img, threshold=20, percentage=10.0):
     """
-    Determine if an image is grayscale/monochrome.
-    If the image has fewer than 3 channels, it is grayscale.
-    Otherwise, we compute the pixel-wise difference between the maximum and minimum
-    of the B, G, R channels. If more than `percentage` of the pixels have a difference
-    greater than `threshold`, the image is considered to be in color.
+    Determine if an image is monochrome / sepia / grayscale vs true multi-color.
+    Returns True if the photo needs DDColor colorization.
+    Returns False ONLY if the photo is already a rich, genuine multi-color image.
     """
     if len(img.shape) < 3 or img.shape[2] == 1:
         return True
     
     import numpy as np
-    # Calculate pixel-wise difference max(B,G,R) - min(B,G,R)
-    diff = img.max(axis=2).astype(float) - img.min(axis=2).astype(float)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h_channel = hsv[:, :, 0]
+    s_channel = hsv[:, :, 1]
     
-    # Check what percentage of pixels are colorful
-    colorful_pixels = np.sum(diff > threshold)
-    pct = (colorful_pixels / diff.size) * 100
+    mean_sat = s_channel.mean()
+    colorful_mask = s_channel > 35
+    colorful_pct = (colorful_mask.sum() / s_channel.size) * 100.0
     
-    print(f"[Colorizer] Grayscale analysis: {pct:.2f}% of pixels are colorful (threshold={threshold}).")
-    return pct <= percentage
+    if colorful_pct > 5.0:
+        hue_std = float(h_channel[colorful_mask].std())
+    else:
+        hue_std = 0.0
+        
+    print(f"[Colorizer] Color analysis: Mean Saturation={mean_sat:.1f}, "
+          f"Colorful Pixels (S>35)={colorful_pct:.2f}%, Hue StdDev={hue_std:.1f}")
+          
+    is_true_color = (colorful_pct > 12.0) and (hue_std > 20.0 or mean_sat > 40.0)
+    return not is_true_color
 
 
 def colorize_image(colorizer, input_path, output_path):

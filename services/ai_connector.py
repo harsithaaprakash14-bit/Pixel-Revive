@@ -70,6 +70,11 @@ def _get_colorizer():
 
 def _get_ram_usage():
     try:
+        import psutil
+        return psutil.Process(os.getpid()).memory_info().rss / (1024.0 * 1024.0)
+    except Exception:
+        pass
+    try:
         with open('/proc/self/status', 'r') as f:
             for line in f:
                 if line.startswith('VmRSS:'):
@@ -79,6 +84,12 @@ def _get_ram_usage():
     return 0.0
 
 def _get_system_available_ram():
+    try:
+        import psutil
+        return psutil.virtual_memory().available / (1024.0 * 1024.0)
+    except Exception:
+        pass
+
     import os
     limit = None
     usage = None
@@ -169,13 +180,15 @@ def _cleanup_gpu_memory():
         _torch.cuda.empty_cache()
         _torch.cuda.synchronize()
         print("[OK] GPU cache cleared between pipeline steps.")
-    import ctypes
-    try:
-        libc = ctypes.CDLL("libc.so.6")
-        libc.malloc_trim(0)
-        print("[OK] Host RAM trimmed.")
-    except Exception as e:
-        print(f"[Warning] Failed to trim host RAM: {e}")
+    
+    if os.name == 'posix':
+        import ctypes
+        try:
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(0)
+            print("[OK] Host RAM trimmed.")
+        except Exception as e:
+            print(f"[Warning] Failed to trim host RAM: {e}")
 
 
 def _unload_damage_remover():
@@ -289,7 +302,8 @@ def process_image(input_path):
     input_path  = os.path.abspath(input_path)
     filename    = os.path.basename(input_path)
     name, ext   = os.path.splitext(filename)
-    outputs_dir = os.path.join(os.path.dirname(os.path.dirname(input_path)), "outputs")
+    _module_dir = os.path.dirname(os.path.abspath(__file__))   # services/
+    outputs_dir = os.path.join(os.path.dirname(_module_dir), "outputs")
     os.makedirs(outputs_dir, exist_ok=True)
 
     current_path = input_path
@@ -299,6 +313,7 @@ def process_image(input_path):
 
     # --- Stage 1: Damage Removal ---
     step1_output = os.path.join(outputs_dir, f"{name}_repaired{ext}")
+    print(f"[STAGE 1 STARTED] Damage Removal (LaMa) -> input={current_path}")
     
     def run_stage_1(low_mem):
         nonlocal restoration_meta
@@ -360,6 +375,7 @@ def process_image(input_path):
 
     try:
         run_stage_1(low_mem=low_memory_mode)
+        print(f"[STAGE 1 COMPLETED] Damage Removal finished -> {step1_output}")
     except Exception as e:
         err_str = str(e).lower()
         is_oom = "out of memory" in err_str or "oom" in err_str or isinstance(e, MemoryError)
@@ -371,6 +387,7 @@ def process_image(input_path):
             low_memory_mode = True
             unload_all_models()
             run_stage_1(low_mem=True)
+            print(f"[STAGE 1 COMPLETED] Damage Removal finished -> {step1_output}")
         else:
             raise e
 
@@ -379,6 +396,7 @@ def process_image(input_path):
     # --- Stage 2: Face Restoration (before colorization for best identity fidelity) ---
     step2_output = os.path.join(outputs_dir, f"{name}_face_restored{ext}")
     faces_detected_count = 0
+    print(f"[STAGE 2 STARTED] Face Restoration (CodeFormer) -> input={current_path}")
 
     def run_stage_2(low_mem):
         nonlocal faces_detected_count
@@ -414,6 +432,7 @@ def process_image(input_path):
 
     try:
         run_stage_2(low_mem=low_memory_mode)
+        print(f"[STAGE 2 COMPLETED] Face Restoration finished -> {step2_output} (faces: {faces_detected_count})")
     except Exception as e:
         err_str = str(e).lower()
         is_oom = "out of memory" in err_str or "oom" in err_str or isinstance(e, MemoryError)
@@ -425,6 +444,7 @@ def process_image(input_path):
             low_memory_mode = True
             unload_all_models()
             run_stage_2(low_mem=True)
+            print(f"[STAGE 2 COMPLETED] Face Restoration finished -> {step2_output} (faces: {faces_detected_count})")
         else:
             raise e
 
@@ -432,6 +452,7 @@ def process_image(input_path):
 
     # --- Stage 3: Colorization ---
     step3_output = os.path.join(outputs_dir, f"{name}_colorized{ext}")
+    print(f"[STAGE 3 STARTED] Colorization (DDColor) -> input={current_path}")
 
     from services.colorizer import is_grayscale_image
     import cv2
@@ -441,6 +462,7 @@ def process_image(input_path):
     if img_cv is not None and not is_grayscale_image(img_cv):
         print(f"[Colorizer] Image is already in color. Skipping colorization model loading.")
         shutil.copy(current_path, step3_output)
+        print(f"[STAGE 3 COMPLETED] Colorization skipped (already color) -> {step3_output}")
     else:
         def run_stage_3(low_mem):
             # Run in subprocess only if low memory mode is enabled and GPU is available.
@@ -465,6 +487,7 @@ def process_image(input_path):
 
         try:
             run_stage_3(low_mem=low_memory_mode)
+            print(f"[STAGE 3 COMPLETED] Colorization finished -> {step3_output}")
         except Exception as e:
             err_str = str(e).lower()
             is_oom = "out of memory" in err_str or "oom" in err_str or isinstance(e, MemoryError)
@@ -476,12 +499,15 @@ def process_image(input_path):
                 low_memory_mode = True
                 unload_all_models()
                 run_stage_3(low_mem=True)
+                print(f"[STAGE 3 COMPLETED] Colorization finished -> {step3_output}")
             else:
                 raise e
 
     current_path = step3_output
 
     # --- Stage 4: Upscaling (Isolated Conda Env Subprocess) ---
+    print(f"[STAGE 4 STARTED] Super-Resolution 4x Upscaling (Real-ESRGAN) -> input={current_path}")
+
     def run_stage_4(low_mem):
         if low_mem:
             unload_all_models()
@@ -496,6 +522,7 @@ def process_image(input_path):
 
     try:
         step4_output = run_stage_4(low_mem=low_memory_mode)
+        print(f"[STAGE 4 COMPLETED] Super-Resolution Upscaling finished -> {step4_output}")
     except Exception as e:
         err_str = str(e).lower()
         is_oom = "out of memory" in err_str or "oom" in err_str or isinstance(e, MemoryError)
@@ -507,12 +534,14 @@ def process_image(input_path):
             low_memory_mode = True
             unload_all_models()
             step4_output = run_stage_4(low_mem=True)
+            print(f"[STAGE 4 COMPLETED] Super-Resolution Upscaling finished -> {step4_output}")
         else:
             raise e
 
     current_path = step4_output
 
     # --- Stage 5: Final Enhancement (CPU/OpenCV — no GPU required) ---
+    print(f"[STAGE 5 STARTED] Final Enhancement (OpenCV) -> input={current_path}")
     _log_mem("Final Enhancement", "Before")
     try:
         step5_output = os.path.join(outputs_dir, f"{name}_final.png")
@@ -521,7 +550,7 @@ def process_image(input_path):
         from services.enhancer import enhance_final_output
         enhance_final_output(current_path, step5_output)
         current_path = step5_output
-        print("[OK] Final enhancement complete.")
+        print(f"[STAGE 5 COMPLETED] Final Enhancement finished -> {current_path}")
     except Exception as e:
         # Non-fatal: if enhancement fails, continue with upscaled output
         print(f"[WARNING] Final enhancement/refinement failed (non-fatal): {e}. Using upscaled output.")

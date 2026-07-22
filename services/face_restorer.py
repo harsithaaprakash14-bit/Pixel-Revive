@@ -104,15 +104,13 @@ def match_color(target_img, source_img):
     
     return np.clip(matched_bgr * 255.0, 0, 255).astype(np.uint8)
 
-def restore_faces(input_path, output_path, fidelity_weight=0.80):
+def restore_faces(input_path, output_path, fidelity_weight=0.70):
     """
     Detect faces in the image, restore them using CodeFormer, and paste them back.
     If no faces are detected, skip the restoration process and copy input to output.
 
-    fidelity_weight raised 0.70 → 0.80 (default): higher value keeps CodeFormer
-    closer to the original identity (1.0 = perfect fidelity, 0.0 = maximum quality
-    enhancement). 0.80 balances subtle enhancement while strongly preserving eye
-    shape, nose, lips and skin texture.
+    fidelity_weight set to 0.70 (default): balances sharp feature restoration
+    (eyes, nose, lips, teeth) while accurately preserving original identity.
     """
     torch = _get_torch()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -189,10 +187,9 @@ def restore_faces(input_path, output_path, fidelity_weight=0.80):
         except Exception as e:
             print(f"  [FaceRestorer] Warning color-matching failed: {e}")
             
-        # Blend restored face with original cropped input to bring back natural pores, grain, and micro-texture.
-        # Since face restoration runs after damage removal, the cropped_face is already inpainted/clean.
+        # Blend restored face with original cropped input (90% restored face / 10% original)
         try:
-            blend_ratio = 0.80  # 80% restored face, 20% original texture/details
+            blend_ratio = 0.90  # 90% restored face, 10% original texture/details
             restored_face = cv2.addWeighted(restored_face, blend_ratio, cropped_face, 1.0 - blend_ratio, 0)
             print("  [FaceRestorer] Blended original texture successfully.")
         except Exception as e:

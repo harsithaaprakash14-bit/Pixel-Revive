@@ -101,11 +101,17 @@ class VGGFeatureExtractor(nn.Module):
                 max_idx = idx
 
         if os.path.exists(VGG_PRETRAIN_PATH):
-            vgg_net = getattr(vgg, vgg_type)(pretrained=False)
+            try:
+                vgg_net = getattr(vgg, vgg_type)(weights=None)
+            except TypeError:
+                vgg_net = getattr(vgg, vgg_type)(pretrained=False)
             state_dict = torch.load(VGG_PRETRAIN_PATH, map_location=lambda storage, loc: storage)
             vgg_net.load_state_dict(state_dict)
         else:
-            vgg_net = getattr(vgg, vgg_type)(pretrained=True)
+            try:
+                vgg_net = getattr(vgg, vgg_type)(weights='DEFAULT')
+            except TypeError:
+                vgg_net = getattr(vgg, vgg_type)(pretrained=True)
 
         features = vgg_net.features[:max_idx + 1]
 
