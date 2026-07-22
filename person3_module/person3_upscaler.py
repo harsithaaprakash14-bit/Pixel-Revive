@@ -267,8 +267,8 @@ def _cpu_only_inference(input_path, output_path, scale, fmt):
     print(f"\n  [..] CPU inference: {os.path.basename(input_path)}")
 
     # Load model to CPU with tiling to prevent OOM on memory-limited containers.
-    # tile=128 keeps peak RAM well under 2 GB even for 1024x1024 inputs.
-    upsampler = load_model(scale=scale, device="cpu", tile=128, tile_pad=10)
+    # tile=32 keeps peak RAM well under 512 MB even for 1024x1024 inputs.
+    upsampler = load_model(scale=scale, device="cpu", tile=32, tile_pad=10)
 
     start = time.time()
     with torch.inference_mode():
