@@ -9,8 +9,16 @@ import cv2
 from PIL import Image
 from config import Config
 from models import db, RestorationImage
+
+# Monkey-patch for torchvision >= 0.17 compatibility with basicsr
+import sys
+try:
+    import torchvision.transforms.functional
+    sys.modules['torchvision.transforms.functional_tensor'] = torchvision.transforms.functional
+except ImportError:
+    pass
+
 from services.ai_connector import process_image
-from services.damage_remover import generate_damage_mask
 
 
 # Initialize Flask app
@@ -20,9 +28,22 @@ app.config.from_object(Config)
 # Initialize database
 db.init_app(app)
 
-# Auto-create database tables on first startup (idempotent)
+# Auto-create database tables on first startup with retries for Render
+import time
+from sqlalchemy.exc import OperationalError
+
 with app.app_context():
-    db.create_all()
+    retries = 5
+    while retries > 0:
+        try:
+            db.create_all()
+            print("Database connected and tables created!")
+            break
+        except OperationalError as e:
+            print(f"Database not ready yet, retrying in 5 seconds... ({retries} left)")
+            time.sleep(5)
+            retries -= 1
+
 
 ALLOWED_EXTENSIONS = app.config['ALLOWED_EXTENSIONS']
 
@@ -521,3 +542,4 @@ def download_file(filename):
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
+
