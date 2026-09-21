@@ -4,7 +4,7 @@ services:
     name: pixelrevive
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter  # $7/month - upgrade to standard for more RAM
+    plan: free
     region: oregon
     healthCheckPath: /
     envVars:
